@@ -69,7 +69,7 @@ Nono CoWork 换了一个思路：**文件同步**。
 
 ## 快速开始
 
-**环境要求：** VPS（1核1G即可）· Python ≥ 3.12 · [uv](https://docs.astral.sh/uv/)
+**环境要求：** VPS（最低 1核1G，推荐 2核2G）· Python ≥ 3.12 · [uv](https://docs.astral.sh/uv/)
 
 ```bash
 git clone https://github.com/KilYep/nono-cowork.git

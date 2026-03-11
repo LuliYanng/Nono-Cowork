@@ -69,7 +69,7 @@ Your phone/computer                    Your VPS
 
 ## Quick Start
 
-**Requirements:** A Linux VPS (1 vCPU / 1GB RAM is enough) · Python ≥ 3.12 · [uv](https://docs.astral.sh/uv/)
+**Requirements:** A Linux VPS (1 vCPU / 1GB minimum, 2 vCPU / 2GB recommended) · Python ≥ 3.12 · [uv](https://docs.astral.sh/uv/)
 
 ```bash
 git clone https://github.com/KilYep/nono-cowork.git
