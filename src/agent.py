@@ -8,7 +8,7 @@ from tools import tools_map, tools_schema
 from config import MODEL, MAX_ROUNDS, CONTEXT_LIMIT
 from prompt import make_system_prompt
 from llm import call_llm, extract_cache_info, update_token_stats, make_empty_token_stats
-from logger import create_log_file, log_event, serialize_message, serialize_usage
+from logger import create_log_file, close_log_file, log_event, recover_orphaned_logs, serialize_message, serialize_usage
 
 
 def _print_context_bar(usage):
@@ -166,6 +166,9 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None, on_
 
 
 def main():
+    # Recover any orphaned log files from previous crashes
+    recover_orphaned_logs()
+
     # Create log
     log_file = create_log_file()
     log_event(log_file, {"type": "session_start", "model": MODEL})
@@ -207,7 +210,7 @@ def main():
         f"{'═'*50}\033[0m"
     )
     log_event(log_file, {"type": "session_end", "session_token_stats": session_token_stats})
-    log_file.close()
+    close_log_file(log_file)
 
 
 if __name__ == "__main__":

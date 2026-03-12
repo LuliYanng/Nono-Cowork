@@ -25,7 +25,7 @@ def run_agent_for_message(user_id: str, user_text: str,
         channel_name: Channel name (for logging)
     """
     from agent import agent_loop
-    from logger import create_log_file, close_log_file, log_event
+    from logger import log_event
 
     lock = sessions.get_lock(user_id)
 
@@ -38,12 +38,10 @@ def run_agent_for_message(user_id: str, user_text: str,
         session = sessions.get_or_create(user_id)
         history = session["history"]
         token_stats = session["token_stats"]
+        log_file = session["log_file"]  # Session-level log file
 
         # Append user message
         history.append({"role": "user", "content": user_text})
-
-        # Create log file
-        log_file = create_log_file()
         log_event(log_file, {
             "type": f"{channel_name}_message",
             "user_id": user_id,
@@ -95,10 +93,6 @@ def run_agent_for_message(user_id: str, user_text: str,
             logger.error(f"Agent execution error: {e}", exc_info=True)
             reply_func(f"❌ Execution error: {str(e)}")
             log_event(log_file, {"type": "error", "error": str(e)})
-
-        finally:
-            log_event(log_file, {"type": f"{channel_name}_task_end"})
-            close_log_file(log_file)
 
     finally:
         lock.release()

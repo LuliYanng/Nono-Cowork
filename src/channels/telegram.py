@@ -161,10 +161,20 @@ class TelegramChannel(Channel):
 
 # ========== Entry point ==========
 def main():
+    import atexit
+    from logger import recover_orphaned_logs
+    from session import sessions
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+
+    # Recover any orphaned log files from previous crashes
+    recover_orphaned_logs()
+    # Ensure all sessions are closed on shutdown
+    atexit.register(sessions.close_all)
+
     channel = TelegramChannel()
     channel.start()
 

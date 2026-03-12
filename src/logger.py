@@ -1,10 +1,39 @@
-"""Agent event logger — JSONL format, real-time write"""
+"""Agent event logger — JSONL format, real-time write
 
+Log lifecycle:
+- CLI mode: one log file per interactive session (open on start, close on exit)
+- IM mode:  one log file per user session (open on first message, close on reset/shutdown)
+
+Crash safety:
+- Every event is flushed to disk immediately
+- On startup, any orphaned .jsonl files from a previous crash are converted to .json
+- An atexit handler ensures all open log files are closed on normal shutdown
+"""
+
+import atexit
 import json
+import logging
 import time
 from pathlib import Path
 
+logger = logging.getLogger("logger")
+
 LOG_DIR = Path(__file__).parent.parent / "logs"
+
+# Track all open log files for atexit cleanup
+_open_log_files: list = []
+
+
+def recover_orphaned_logs():
+    """Convert any leftover .jsonl files from a previous crash to .json.
+
+    Should be called once at startup.
+    """
+    if not LOG_DIR.exists():
+        return
+    for jsonl_path in LOG_DIR.glob("*.jsonl"):
+        _convert_jsonl_to_json(jsonl_path)
+        logger.info(f"Recovered orphaned log: {jsonl_path}")
 
 
 def create_log_file():
@@ -13,12 +42,13 @@ def create_log_file():
     filename = time.strftime("%Y-%m-%d_%H-%M-%S") + ".jsonl"
     filepath = LOG_DIR / filename
     f = open(filepath, "a", encoding="utf-8")
+    _open_log_files.append(f)
     print(f"📝 Log file: {filepath}")
     return f
 
 
 def log_event(log_file, event: dict):
-    """Write a log event."""
+    """Write a log event (flushed immediately for crash safety)."""
     if log_file is None:
         return
     event["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -30,10 +60,22 @@ def close_log_file(log_file):
     """Close the log file and convert JSONL to pretty-printed JSON."""
     if log_file is None:
         return
-    log_file.close()
+    try:
+        log_file.close()
+    except Exception:
+        pass
+
+    # Remove from tracked list
+    if log_file in _open_log_files:
+        _open_log_files.remove(log_file)
 
     # Convert JSONL → pretty JSON
     jsonl_path = Path(log_file.name)
+    _convert_jsonl_to_json(jsonl_path)
+
+
+def _convert_jsonl_to_json(jsonl_path: Path):
+    """Convert a JSONL file to pretty-printed JSON, then remove the JSONL file."""
     if not jsonl_path.exists():
         return
 
@@ -45,12 +87,28 @@ def close_log_file(log_file):
                 line = line.strip()
                 if line:
                     entries.append(json.loads(line))
+        if not entries:
+            # Empty file, just remove it
+            jsonl_path.unlink()
+            return
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(entries, f, indent=2, ensure_ascii=False)
         jsonl_path.unlink()
         print(f"📋 Log saved: {json_path}")
     except Exception as e:
         print(f"⚠️ Failed to convert JSONL to JSON: {e}")
+
+
+def _atexit_close_all():
+    """Close all open log files on process exit (safety net)."""
+    for f in list(_open_log_files):
+        try:
+            close_log_file(f)
+        except Exception:
+            pass
+
+
+atexit.register(_atexit_close_all)
 
 
 def serialize_message(msg) -> dict:
