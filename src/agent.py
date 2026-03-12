@@ -3,17 +3,12 @@ Agent core — the main agent loop and CLI entry point.
 """
 
 import re
-import warnings
-import litellm
 import json
-import time
 from tools.tools_decoration import tools, tools_map
-from config import MODEL, MAX_ROUNDS, CONTEXT_LIMIT, CACHE_CONTROL_PROVIDERS
+from config import MODEL, MAX_ROUNDS, CONTEXT_LIMIT
 from prompt import make_system_prompt
+from llm import call_llm, extract_cache_info, update_token_stats, make_empty_token_stats
 from logger import create_log_file, log_event, serialize_message, serialize_usage
-
-# Suppress Pydantic serialization warnings triggered by LiteLLM (harmless)
-warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
 
 
 def _print_context_bar(usage):
@@ -43,82 +38,25 @@ def _print_context_bar(usage):
     print(f"\n\n{color}  ⟨{bar}⟩ {pct:.0f}%  context: {fmt(prompt_tokens)} / {fmt(CONTEXT_LIMIT)}\033[0m")
 
 
-def _inject_cache_control(messages: list, model: str) -> list:
-    """Inject cache_control markers for models that support prompt caching.
-
-    For unsupported models, returns messages unchanged.
-    """
-    if not any(model.startswith(p) for p in CACHE_CONTROL_PROVIDERS):
-        return messages  # Unsupported model, pass through
-
-    enhanced = []
-    for msg in messages:
-        if isinstance(msg, dict) and msg.get("role") == "user":
-            content = msg.get("content", "")
-            # Plain string → add cache_control
-            if isinstance(content, str):
-                enhanced.append({
-                    **msg,
-                    "content": [{"type": "text", "text": content,
-                                 "cache_control": {"type": "ephemeral"}}]
-                })
-            else:
-                enhanced.append(msg)
-        else:
-            enhanced.append(msg)
-    return enhanced
-
-
 def agent_loop(history: list[dict], log_file=None, token_stats: dict = None, on_event=None):
     """Core Agent loop."""
 
     # Initialize / reuse token stats
     if token_stats is None:
-        token_stats = {
-            "total_prompt_tokens": 0,
-            "total_completion_tokens": 0,
-            "total_tokens": 0,
-            "total_cached_tokens": 0,
-            "total_api_calls": 0,
-        }
+        token_stats = make_empty_token_stats()
 
     for round_num in range(1, MAX_ROUNDS + 1):
         print(f"\n=============== Round {round_num} ===============\n")
 
         try:
-            completion = litellm.completion(
-                model=MODEL,
-                messages=_inject_cache_control(history, MODEL),
-                tools=tools,
-                tool_choice="auto",
-                drop_params=True,    # Auto-drop params unsupported by target model
-            )
+            completion = call_llm(history, tools=tools)
 
-            
             msg = completion.choices[0].message
 
-            # Extract cache info
-            cache_info = {}
-            prompt_details = getattr(completion.usage, "prompt_tokens_details", None)
-            if prompt_details:
-                cache_info["cached_tokens"] = getattr(prompt_details, "cached_tokens", 0) or 0
-                cache_info["cache_creation_tokens"] = getattr(prompt_details, "cache_creation_input_tokens", 0) or 0
-
-            # ── Token stats ──
+            # Extract cache info & update token stats
+            cache_info = extract_cache_info(completion.usage)
             usage = completion.usage
-            if usage:
-                round_prompt = usage.prompt_tokens or 0
-                round_completion = usage.completion_tokens or 0
-                round_total = usage.total_tokens or 0
-                round_cached = cache_info.get("cached_tokens", 0)
-
-                token_stats["total_prompt_tokens"] += round_prompt
-                token_stats["total_completion_tokens"] += round_completion
-                token_stats["total_tokens"] += round_total
-                token_stats["total_cached_tokens"] += round_cached
-                token_stats["total_api_calls"] += 1
-
-
+            update_token_stats(token_stats, usage, cache_info)
 
             # Log raw LLM response
             log_event(log_file, {
@@ -233,17 +171,11 @@ def main():
     log_event(log_file, {"type": "session_start", "model": MODEL})
 
     SYSTEM_PROMPT = make_system_prompt()
-    history:list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    history: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
     print("🚀 Agent started (Ctrl+C to interrupt, type 'exit' to quit)")
 
     # Session-wide token stats (cumulative across multiple agent_loop calls)
-    session_token_stats = {
-        "total_prompt_tokens": 0,
-        "total_completion_tokens": 0,
-        "total_tokens": 0,
-        "total_cached_tokens": 0,
-        "total_api_calls": 0,
-    }
+    session_token_stats = make_empty_token_stats()
 
     # Agent loop
     while True:
@@ -258,7 +190,7 @@ def main():
             log_event(log_file, {"type": "user_input", "content": user_message})
 
             history, session_token_stats = agent_loop(history, log_file, session_token_stats)
-            
+
         except KeyboardInterrupt:
             print("\n👋 Goodbye!")
             break
