@@ -96,6 +96,10 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None, on_
                     on_event({"type": "final_reply", "content": final_text, "round": round_num})
                 break
 
+            # Has tool calls AND text → send narration to IM channels
+            if on_event and final_text:
+                on_event({"type": "narration", "content": final_text, "round": round_num})
+
             # Has tool calls → execute each one
             for tc in msg.tool_calls:
                 tool_name = tc.function.name

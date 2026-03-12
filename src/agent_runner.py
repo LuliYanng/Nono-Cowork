@@ -5,6 +5,7 @@ Responsibilities: session management, concurrency control, calling agent_loop, e
 """
 import logging
 from session import sessions
+from context import set_context, clear_context
 
 logger = logging.getLogger("agent_runner")
 
@@ -34,6 +35,9 @@ def run_agent_for_message(user_id: str, user_text: str,
         reply_func("⏳ The previous task is still running. Please wait for it to finish.")
         return
 
+    # Set execution context so tools can access user_id and channel_name
+    set_context(user_id=user_id, channel_name=channel_name)
+
     try:
         session = sessions.get_or_create(user_id)
         history = session["history"]
@@ -50,12 +54,19 @@ def run_agent_for_message(user_id: str, user_text: str,
 
         # Agent event collector
         events = []
+        narrated_rounds = set()  # Track rounds that already sent a narration
 
         def on_event(evt):
             events.append(evt)
-            if status_func and evt["type"] == "tool_call":
-                tool_name = evt["tool_name"]
-                status_func(f"🔧 Running: {tool_name}...")
+            round_num = evt.get("round")
+            if evt["type"] == "narration" and status_func:
+                # LLM's brief narration alongside tool calls — more natural than tool name
+                status_func(f"💬 {evt['content']}")
+                narrated_rounds.add(round_num)
+            elif evt["type"] == "tool_call" and status_func:
+                # Only show generic tool status if no narration was sent this round
+                if round_num not in narrated_rounds:
+                    status_func(f"🔧 Running: {evt['tool_name']}...")
 
         # Run Agent
         try:
@@ -95,4 +106,5 @@ def run_agent_for_message(user_id: str, user_text: str,
             log_event(log_file, {"type": "error", "error": str(e)})
 
     finally:
+        clear_context()
         lock.release()

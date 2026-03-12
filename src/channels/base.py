@@ -83,7 +83,7 @@ class Channel(ABC):
             self.send_reply(user_id, text)
 
         def status_func(text):
-            pass  # MVP: skip status push for now
+            self.send_status(user_id, text)
 
         # Run Agent in a separate thread
         thread = threading.Thread(
