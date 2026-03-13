@@ -1,9 +1,14 @@
 """
-Execution context — provides user_id and channel_name to tools during Agent execution.
+Context engineering — execution context, compression, trimming, and memory management.
 
-Uses threading.local() so each thread (each IM message handler) has its own context.
-Tools like scheduled task creation need to know WHO is asking and WHICH channel to reply to,
-but these are not parameters the Agent should decide — they come from the environment.
+This package provides:
+  - Execution context (user_id, channel_name) for tools during Agent execution
+  - Context compression (sliding-window summarization)
+  - Tool output trimming
+
+Execution context uses threading.local() so each thread has its own context.
+Tools like scheduled task creation need to know WHO is asking and WHICH
+channel to reply to — these come from the environment, not from the Agent.
 
 Usage:
     # In agent_runner (set context before running agent_loop):

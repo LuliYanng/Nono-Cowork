@@ -61,6 +61,15 @@ Your operations work as if you're on the user's own computer — files you modif
 
 # Context
 Current time: {time}
+
+# Memory
+You have a persistent memory system. Use the `memory_append` tool to save important information about the user that should be remembered across sessions. Use `memory_read` to review your saved memories.
+- Proactively save user preferences, project context, personal facts, and recurring patterns
+- Keep memory entries concise — record facts, not full conversations
+- Use Markdown headings (## Topic) to organize different categories
+- Don't save trivial or one-time information
+
+{memory_section}
 """
 
 
@@ -92,9 +101,21 @@ def _resolve_workspace() -> str:
 
 
 def make_system_prompt() -> str:
-    """Generate a system prompt with current timestamp and resolved workspace."""
+    """Generate a system prompt with current timestamp, workspace, and memory."""
     workspace = _resolve_workspace()
+
+    # Load persistent memory
+    memory_section = ""
+    from memory.store import load_memory
+    from config import MEMORY_MAX_INJECT_CHARS
+    memory_content = load_memory()
+    if memory_content:
+        if len(memory_content) > MEMORY_MAX_INJECT_CHARS:
+            memory_content = memory_content[:MEMORY_MAX_INJECT_CHARS] + "\n\n... [memory truncated, use memory_read to see full contents]"
+        memory_section = f"## Saved Memories\n{memory_content}"
+
     return SYSTEM_PROMPT_TEMPLATE.format(
         time=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
         workspace=workspace,
+        memory_section=memory_section,
     )

@@ -9,6 +9,8 @@ from config import MODEL, MAX_ROUNDS, CONTEXT_LIMIT
 from prompt import make_system_prompt
 from llm import call_llm, extract_cache_info, update_token_stats, make_empty_token_stats
 from logger import create_log_file, close_log_file, log_event, recover_orphaned_logs, serialize_message, serialize_usage
+from context.spill import spill_tool_output
+from context.compressor import compress_history, needs_compression
 
 
 def _print_context_bar(usage):
@@ -45,10 +47,25 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None, on_
     if token_stats is None:
         token_stats = make_empty_token_stats()
 
+    last_prompt_tokens = 0  # Track for compression decisions
+
     for round_num in range(1, MAX_ROUNDS + 1):
         print(f"\n=============== Round {round_num} ===============\n")
 
         try:
+            # ── Context compression: summarize old turns if context is getting full ──
+            if last_prompt_tokens and needs_compression(last_prompt_tokens):
+                old_len = len(history)
+                history = compress_history(history, last_prompt_tokens)
+                if len(history) < old_len:
+                    print(f"\033[35m  📦 Context compressed: {old_len} → {len(history)} messages\033[0m")
+                    log_event(log_file, {
+                        "type": "context_compressed",
+                        "round": round_num,
+                        "old_messages": old_len,
+                        "new_messages": len(history),
+                    })
+
             completion = call_llm(history, tools=tools_schema)
 
             msg = completion.choices[0].message
@@ -57,6 +74,7 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None, on_
             cache_info = extract_cache_info(completion.usage)
             usage = completion.usage
             update_token_stats(token_stats, usage, cache_info)
+            last_prompt_tokens = usage.prompt_tokens or 0
 
             # Log raw LLM response
             log_event(log_file, {
@@ -115,6 +133,9 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None, on_
                     tool_result = str(func(**args))
                 else:
                     tool_result = f"Error: unknown tool {tool_name}"
+
+                # ── Spill large tool outputs to file ──
+                tool_result = spill_tool_output(tool_result, tool_name=tool_name)
 
                 print(f"\033[90mTool result >>>\n {tool_result}\033[0m\n")
 
