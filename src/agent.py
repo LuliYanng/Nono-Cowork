@@ -112,6 +112,14 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None, on_
                 # Notify external: agent produced its final reply
                 if on_event and final_text:
                     on_event({"type": "final_reply", "content": final_text, "round": round_num})
+                # Notify external: usage report
+                if on_event:
+                    on_event({
+                        "type": "usage_report",
+                        "token_stats": dict(token_stats),
+                        "prompt_tokens": usage.prompt_tokens or 0 if usage else 0,
+                        "round": round_num,
+                    })
                 break
 
             # Has tool calls AND text → send narration to IM channels

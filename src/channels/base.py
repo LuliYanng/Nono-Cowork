@@ -76,7 +76,7 @@ class Channel(ABC):
             return
 
         # "Processing" notification
-        self.send_status(user_id, "⏳ Received, processing...")
+        self.send_status(user_id, "💭 Thinking...")
 
         # Build callbacks
         def reply_func(text):

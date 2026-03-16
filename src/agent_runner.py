@@ -100,6 +100,19 @@ def run_agent_for_message(user_id: str, user_text: str,
             else:
                 reply_func("✅ Task completed (no text output)")
 
+            # Send usage bar after reply (so it appears below the response)
+            if status_func:
+                for evt in reversed(events):
+                    if evt["type"] == "usage_report":
+                        from config import CONTEXT_LIMIT
+                        pt = evt.get("prompt_tokens", 0)
+                        pct = min(pt / CONTEXT_LIMIT * 100, 100)
+                        filled = int(12 * pct / 100)
+                        bar = "█" * filled + "░" * (12 - filled)
+                        fmt = lambda n: f"{n/1000:.0f}k" if n >= 1000 else str(n)
+                        status_func(f"⟨{bar}⟩ {pct:.0f}%  context: {fmt(pt)} / {fmt(CONTEXT_LIMIT)}")
+                        break
+
         except Exception as e:
             logger.error(f"Agent execution error: {e}", exc_info=True)
             reply_func(f"❌ Execution error: {str(e)}")
