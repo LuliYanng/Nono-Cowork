@@ -1,11 +1,102 @@
 """
 File operation tools — read, write, and edit files.
+
+Supports binary formats: PDF (.pdf), Excel (.xlsx/.xls), Word (.docx).
+Binary files are auto-converted to text/Markdown when read.
 """
 
 import os
 import shutil
 from datetime import datetime
 from tools.registry import tool
+
+
+# ————— Binary format converters —————
+
+def _read_pdf(path: str) -> str:
+    """Extract text from a PDF file. Falls back to OCR for scanned pages."""
+    import pymupdf
+    doc = pymupdf.open(path)
+    pages = []
+    ocr_used = False
+
+    for i, page in enumerate(doc, 1):
+        # Try normal text extraction first
+        text = page.get_text().strip()
+        if text:
+            pages.append(f"--- Page {i} ---\n{text}")
+            continue
+
+        # No text — try OCR (for scanned pages)
+        try:
+            tp = page.get_textpage_ocr(language="chi_sim+eng", dpi=300)
+            text = page.get_text("text", textpage=tp).strip()
+            if text:
+                pages.append(f"--- Page {i} (OCR) ---\n{text}")
+                ocr_used = True
+        except Exception:
+            pass  # OCR not available or failed, skip this page
+
+    doc.close()
+    if not pages:
+        return f"📄 {path} (PDF, {doc.page_count} pages)\n(No extractable text, and OCR found nothing. This PDF may contain only non-text images.)"
+    suffix = " [OCR used for some pages]" if ocr_used else ""
+    return f"📄 {path} (PDF, {len(pages)} pages with text{suffix})\n\n" + "\n\n".join(pages)
+
+
+def _read_excel(path: str) -> str:
+    """Read Excel file and return as Markdown tables."""
+    from openpyxl import load_workbook
+    wb = load_workbook(path, read_only=True, data_only=True)
+    sheets = []
+    for name in wb.sheetnames:
+        ws = wb[name]
+        rows = []
+        for row in ws.iter_rows(values_only=True):
+            rows.append(list(row))
+        if not rows:
+            continue
+
+        # Build Markdown table
+        # Use first row as header
+        header = rows[0]
+        col_count = len(header)
+        header_strs = [str(c) if c is not None else "" for c in header]
+        lines = [
+            "| " + " | ".join(header_strs) + " |",
+            "| " + " | ".join(["---"] * col_count) + " |",
+        ]
+        for row in rows[1:]:
+            # Pad row if shorter than header
+            cells = list(row) + [None] * (col_count - len(row))
+            lines.append("| " + " | ".join(str(c) if c is not None else "" for c in cells[:col_count]) + " |")
+
+        sheet_text = f"### Sheet: {name} ({len(rows)-1} data rows)\n\n" + "\n".join(lines)
+        sheets.append(sheet_text)
+    wb.close()
+
+    if not sheets:
+        return f"📄 {path} (Excel, {len(wb.sheetnames)} sheets)\n(All sheets are empty.)"
+    return f"📄 {path} (Excel)\n\n" + "\n\n".join(sheets)
+
+
+def _read_docx(path: str) -> str:
+    """Extract text from a Word document."""
+    from docx import Document
+    doc = Document(path)
+    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+    if not paragraphs:
+        return f"📄 {path} (Word)\n(No text content found.)"
+    return f"📄 {path} (Word, {len(paragraphs)} paragraphs)\n\n" + "\n".join(paragraphs)
+
+
+# Extension → converter mapping
+_BINARY_READERS: dict[str, callable] = {
+    ".pdf": _read_pdf,
+    ".xlsx": _read_excel,
+    ".xls": _read_excel,
+    ".docx": _read_docx,
+}
 
 
 # ————— Snapshot: auto-backup before Agent edits —————
@@ -96,7 +187,7 @@ def _snapshot_file(file_path: str) -> str | None:
 
 @tool(
     name="read_file",
-    description="Read file contents with optional line range. Use this to view code, config files, READMEs, etc. Output includes line numbers for easy reference.",
+    description="Read file contents with optional line range. Supports text files, PDF, Excel (.xlsx), and Word (.docx) — binary formats are automatically converted to text. Use this to view code, configs, documents, spreadsheets, etc.",
     parameters={
         "type": "object",
         "properties": {
@@ -122,6 +213,15 @@ def read_file(path: str, start_line: int = None, end_line: int = None) -> str:
         return f"❌ File not found: {path}"
     if os.path.isdir(path):
         return f"❌ This is a directory, not a file: {path}"
+
+    # Check for binary formats that need special handling
+    ext = os.path.splitext(path)[1].lower()
+    reader = _BINARY_READERS.get(ext)
+    if reader:
+        try:
+            return reader(path)
+        except Exception as ex:
+            return f"❌ Failed to read {ext} file: {str(ex)}"
 
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:

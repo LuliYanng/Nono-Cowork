@@ -18,6 +18,7 @@ Your operations work as if you're on the user's own computer — files you modif
 - Your default working directory is: {workspace}
 - Files synced in real-time with the user's local machine via Syncthing
 - You can freely use all tools on the server (Python, Shell, network, etc.)
+- Document processing libraries available: pymupdf (PDF), openpyxl (Excel), python-docx (Word)
 
 # What You Can Do
 1. **File Processing**: Organize files, batch rename, format conversion, data extraction
