@@ -111,6 +111,23 @@ class TelegramChannel(Channel):
         except Exception as e:
             logger.error(f"Failed to send status: {e}")
 
+    def send_file(self, user_id: str, file_path: str, caption: str = "") -> bool:
+        """Send a file to the user via Telegram."""
+        chat_id = int(user_id)
+        try:
+            with open(file_path, "rb") as f:
+                ext = os.path.splitext(file_path)[1].lower()
+                if ext in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+                    self.bot.send_photo(chat_id, f, caption=caption or None)
+                elif ext in (".mp4", ".avi", ".mov"):
+                    self.bot.send_video(chat_id, f, caption=caption or None)
+                else:
+                    self.bot.send_document(chat_id, f, caption=caption or None)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send file: {e}")
+            return False
+
     # ---- Telegram-specific internal methods ----
 
     def _on_message(self, message):

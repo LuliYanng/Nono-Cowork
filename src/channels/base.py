@@ -52,6 +52,13 @@ class Channel(ABC):
         """Send a brief status update (plain text)."""
         ...
 
+    def send_file(self, user_id: str, file_path: str, caption: str = "") -> bool:
+        """Send a file to the user via IM. Returns True on success.
+
+        Override in subclass to enable file sending. Default: not supported.
+        """
+        return False
+
     def dispatch(self, user_id: str, user_text: str,
                  extra_context: dict = None):
         """

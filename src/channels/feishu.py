@@ -101,6 +101,77 @@ class FeishuChannel(Channel):
         """Send plain text status update."""
         self._send_text(user_id, text)
 
+    def send_file(self, user_id: str, file_path: str, caption: str = "") -> bool:
+        """Send a file to the user via Feishu (upload → send message)."""
+        import os as _os
+        from lark_oapi.api.im.v1 import CreateFileRequest, CreateFileRequestBody
+
+        if not _os.path.exists(file_path):
+            logger.error(f"File not found: {file_path}")
+            return False
+
+        file_name = _os.path.basename(file_path)
+        ext = _os.path.splitext(file_name)[1].lower()
+
+        # Determine file_type for Feishu API
+        image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+        if ext in image_exts:
+            file_type = "image"
+            msg_type = "image"
+        else:
+            file_type = "stream"
+            msg_type = "file"
+
+        try:
+            # Step 1: Upload file to Feishu
+            with open(file_path, "rb") as f:
+                request = CreateFileRequest.builder() \
+                    .request_body(
+                        CreateFileRequestBody.builder()
+                            .file_type(file_type)
+                            .file_name(file_name)
+                            .file(f)
+                            .build()
+                    ).build()
+                resp = self.client.im.v1.file.create(request)
+
+            if not resp.success():
+                logger.error(f"Failed to upload file: code={resp.code}, msg={resp.msg}")
+                return False
+
+            file_key = resp.data.file_key
+
+            # Step 2: Send file message
+            if msg_type == "image":
+                content = json.dumps({"image_key": file_key})
+            else:
+                content = json.dumps({"file_key": file_key})
+
+            request = CreateMessageRequest.builder() \
+                .receive_id_type("open_id") \
+                .request_body(
+                    CreateMessageRequestBody.builder()
+                        .receive_id(user_id)
+                        .msg_type(msg_type)
+                        .content(content)
+                        .build()
+                ).build()
+            resp = self.client.im.v1.message.create(request)
+
+            if not resp.success():
+                logger.error(f"Failed to send file message: code={resp.code}, msg={resp.msg}")
+                return False
+
+            # Send caption as a follow-up text if provided
+            if caption:
+                self._send_text(user_id, caption)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to send file: {e}", exc_info=True)
+            return False
+
     # ---- Feishu-specific internal methods ----
 
     def _on_message_event(self, data) -> None:

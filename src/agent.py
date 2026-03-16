@@ -13,6 +13,40 @@ from context.spill import spill_tool_output
 from context.compressor import compress_history, needs_compression
 
 
+def format_usage_summary(token_stats: dict, usage=None) -> str:
+    """Format a concise usage summary for IM channels.
+
+    Args:
+        token_stats: Cumulative token stats for the current task.
+        usage: Optional last-round usage object (for context percentage).
+
+    Returns:
+        A short, human-readable usage summary string.
+    """
+    def fmt(n):
+        return f"{n/1000:.1f}k" if n >= 1000 else str(n)
+
+    total = token_stats.get("total_tokens", 0)
+    prompt = token_stats.get("total_prompt_tokens", 0)
+    completion = token_stats.get("total_completion_tokens", 0)
+    cached = token_stats.get("total_cached_tokens", 0)
+    calls = token_stats.get("total_api_calls", 0)
+
+    parts = [f"📊 Token: {fmt(total)}"]
+    parts.append(f"(prompt {fmt(prompt)} + completion {fmt(completion)})")
+    if cached:
+        parts.append(f"| cached {fmt(cached)}")
+    parts.append(f"| {calls} calls")
+
+    # Context usage percentage
+    if usage:
+        prompt_tokens = usage.prompt_tokens or 0
+        pct = min(prompt_tokens / CONTEXT_LIMIT * 100, 100)
+        parts.append(f"| context {pct:.0f}%")
+
+    return " ".join(parts)
+
+
 def _print_context_bar(usage):
     """Print a Cursor-style context usage progress bar."""
     if not usage:
@@ -116,6 +150,7 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None, on_
                 if on_event:
                     on_event({
                         "type": "usage_report",
+                        "summary": format_usage_summary(token_stats, usage),
                         "token_stats": dict(token_stats),
                         "prompt_tokens": usage.prompt_tokens or 0 if usage else 0,
                         "round": round_num,

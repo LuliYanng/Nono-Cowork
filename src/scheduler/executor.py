@@ -110,9 +110,17 @@ def _run_task(task: dict):
         if not final_reply:
             final_reply = "✅ Task completed (no text output)"
 
+        # Extract usage report and append as footer
+        usage_line = ""
+        for evt in reversed(events):
+            if evt["type"] == "usage_report":
+                usage_line = evt.get("summary", "")
+                break
+
         # Send result to user
         header = f"📋 Scheduled Task 「{task_name}」 Result:\n\n"
-        channel.send_reply(user_id, header + final_reply)
+        footer = f"\n\n---\n{usage_line}" if usage_line else ""
+        channel.send_reply(user_id, header + final_reply + footer)
 
         # Update task record
         update_task(
