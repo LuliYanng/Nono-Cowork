@@ -27,3 +27,9 @@ data/
 # Module architecture docs (local only)
 src/context/design.md
 src/memory/design.md
+
+# Third-party proprietary skills (local use only)
+skills/pdf/
+skills/xlsx/
+skills/docx/
+skills/pptx/
