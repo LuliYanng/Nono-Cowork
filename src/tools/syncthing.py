@@ -14,6 +14,41 @@ class SyncthingClient:
         self.url = (url or os.getenv("SYNCTHING_URL", "http://localhost:8384")).rstrip("/")
         self.api_key = api_key or os.getenv("SYNCTHING_API_KEY", "")
         self.headers = {"X-API-Key": self.api_key} if self.api_key else {}
+        self._folder_cache = None  # Cached folder list
+
+    def resolve_folder_id(self, file_path=None):
+        """Auto-resolve folder ID.
+
+        Resolution order:
+        1. Match by file_path (find folder whose path contains the file)
+        2. Match by WORKSPACE_DIR env var
+        3. Fall back to the first folder
+
+        Works with single or multiple synced folders.
+        """
+        if self._folder_cache is None:
+            self._folder_cache = self.get_folders()
+
+        if not self._folder_cache:
+            raise ValueError("No synced folders configured in Syncthing")
+
+        # Try to match by file path
+        if file_path:
+            abs_path = os.path.abspath(file_path)
+            for f in self._folder_cache:
+                if abs_path.startswith(os.path.abspath(f["path"])):
+                    return f["id"]
+
+        # Try to match by workspace env var
+        workspace = os.getenv("WORKSPACE_DIR", "").strip()
+        if workspace:
+            workspace = os.path.abspath(os.path.expanduser(workspace))
+            for f in self._folder_cache:
+                if os.path.abspath(f["path"]) == workspace:
+                    return f["id"]
+
+        # Fall back to first folder
+        return self._folder_cache[0]["id"]
 
     def _get(self, path, **params):
         r = requests.get(f"{self.url}{path}", headers=self.headers, params=params, timeout=10)
@@ -152,7 +187,7 @@ def _get_client():
 
 @tool(
     name="sync_status",
-    description="Check Syncthing synchronization status. Displays all synced folder paths, their sync status, and whether the user's device is online. Call this before operating on synced folders to confirm synchronization is healthy.",
+    description="Check Syncthing synchronization status. Displays all synced folder paths, their sync status, and whether the user's device is online. Use as a diagnostic tool when sync issues arise.",
     parameters={
         "type": "object",
         "properties": {},
@@ -162,7 +197,6 @@ def sync_status() -> str:
     """Check Syncthing sync status.
 
     Displays synced folder list, paths, sync state, and whether the user's device is online.
-    Call this before operating on synced folders to confirm sync is healthy.
     """
     try:
         st = _get_client()
@@ -212,35 +246,26 @@ def sync_status() -> str:
 
 @tool(
     name="sync_wait",
-    description="Wait for file synchronization to complete. Call this after modifying files in a synced folder to ensure changes have been synced to the user's local machine.",
+    description="Wait for file synchronization to complete. Call this after modifying files in the workspace to ensure changes have been synced to the user's local machine. Folder ID is auto-detected — no need to pass it.",
     parameters={
         "type": "object",
         "properties": {
-            "folder_id": {
-                "type": "string",
-                "description": "Synced folder ID, obtainable via sync_status(). Default is 'default'.",
-                "default": "default",
-            },
             "timeout": {
                 "type": "integer",
-                "description": "Maximum number of seconds to wait. Default is 30.",
+                "description": "Maximum seconds to wait. Default is 30.",
                 "default": 30,
             },
         },
     },
 )
-def sync_wait(folder_id: str = "default", timeout: int = 30) -> str:
-    """Wait for a folder to finish syncing.
+def sync_wait(timeout: int = 30) -> str:
+    """Wait for synced folder to finish syncing.
 
-    Call this after modifying files in a synced folder to ensure changes
-    have been transferred to the user's local machine.
-
-    Args:
-        folder_id: Synced folder ID, default "default". Use sync_status() to see all folder IDs.
-        timeout: Maximum seconds to wait, default 30
+    Folder ID is auto-detected from workspace config.
     """
     try:
         st = _get_client()
+        folder_id = st.resolve_folder_id()
 
         # Trigger a scan first to speed up change detection
         try:
@@ -251,12 +276,12 @@ def sync_wait(folder_id: str = "default", timeout: int = 30) -> str:
         if st.wait_for_sync(folder_id, timeout):
             status = st.get_folder_status(folder_id)
             return (
-                f"✅ Folder '{folder_id}' sync complete\n"
+                f"✅ Sync complete\n"
                 f"  Local files: {status.get('localFiles', '?')}\n"
                 f"  Global files: {status.get('globalFiles', '?')}"
             )
         else:
-            return f"⏳ Folder '{folder_id}' still syncing after {timeout}s. It may have large changes, please check again later."
+            return f"⏳ Still syncing after {timeout}s. May have large changes, check again later."
 
     except requests.ConnectionError:
         return "❌ Cannot connect to Syncthing. Is the service running?"
@@ -266,33 +291,28 @@ def sync_wait(folder_id: str = "default", timeout: int = 30) -> str:
 
 @tool(
     name="sync_versions",
-    description="List recoverable file versions in a synced folder. Syncthing keeps old versions when files are modified or deleted (if versioning is enabled). Use this to find files that can be restored.",
+    description="List recoverable file versions in the synced folder. Syncthing keeps old versions when files are modified or deleted. Use this to find files that can be restored.",
     parameters={
         "type": "object",
-        "properties": {
-            "folder_id": {
-                "type": "string",
-                "description": "Synced folder ID. Default is 'default'.",
-                "default": "default",
-            },
-        },
+        "properties": {},
     },
 )
-def sync_versions(folder_id: str = "default") -> str:
+def sync_versions() -> str:
     """List archived file versions that can be restored."""
     try:
         st = _get_client()
+        folder_id = st.resolve_folder_id()
         versions = st.get_versions(folder_id)
 
         if not versions:
             return (
                 "📂 No archived versions found.\n\n"
                 "This could mean:\n"
-                "  - File versioning is not enabled (enable it in Syncthing Web UI → Folder → Edit → File Versioning)\n"
+                "  - File versioning is not enabled\n"
                 "  - No files have been modified/deleted by remote devices yet"
             )
 
-        result = f"📂 Archived versions in folder '{folder_id}':\n\n"
+        result = "📂 Archived versions:\n\n"
         for filepath, version_list in versions.items():
             result += f"  📄 {filepath}\n"
             for v in version_list:
@@ -300,11 +320,11 @@ def sync_versions(folder_id: str = "default") -> str:
                 mod_time = v.get("modTime", "?")
                 size = v.get("size", 0)
                 size_str = f"{size / 1024:.1f}KB" if size >= 1024 else f"{size}B"
-                result += f"     ⏱️ {vtime} (last modified: {mod_time}, size: {size_str})\n"
+                result += f"     ⏱️ {vtime} (modified: {mod_time}, size: {size_str})\n"
 
         result += (
-            f"\nTo restore a file, use sync_restore(folder_id=\"{folder_id}\", "
-            f"file_path=\"<path>\", version_time=\"<timestamp>\")"
+            "\nTo restore a file, use sync_restore("
+            "file_path=\"<path>\", version_time=\"<timestamp>\")"
         )
         return result
 
@@ -320,26 +340,23 @@ def sync_versions(folder_id: str = "default") -> str:
     parameters={
         "type": "object",
         "properties": {
-            "folder_id": {
-                "type": "string",
-                "description": "Synced folder ID.",
-            },
             "file_path": {
                 "type": "string",
                 "description": "Relative path of the file to restore (as shown in sync_versions output).",
             },
             "version_time": {
                 "type": "string",
-                "description": "Timestamp of the version to restore (as shown in sync_versions output, e.g. '2024-01-15T10:30:00+08:00').",
+                "description": "Timestamp of the version to restore (e.g. '2024-01-15T10:30:00+08:00').",
             },
         },
-        "required": ["folder_id", "file_path", "version_time"],
+        "required": ["file_path", "version_time"],
     },
 )
-def sync_restore(folder_id: str, file_path: str, version_time: str) -> str:
+def sync_restore(file_path: str, version_time: str) -> str:
     """Restore a file to a previous archived version."""
     try:
         st = _get_client()
+        folder_id = st.resolve_folder_id()
         result = st.restore_versions(folder_id, {file_path: version_time})
 
         # The API returns errors as {"path": "error message"}, empty = success
@@ -348,7 +365,7 @@ def sync_restore(folder_id: str, file_path: str, version_time: str) -> str:
 
         errors = [f"  {path}: {err}" for path, err in result.items() if err]
         if errors:
-            return f"❌ Restore failed:\n" + "\n".join(errors)
+            return "❌ Restore failed:\n" + "\n".join(errors)
 
         return f"✅ Restored '{file_path}' to version from {version_time}"
 
@@ -360,26 +377,21 @@ def sync_restore(folder_id: str, file_path: str, version_time: str) -> str:
 
 @tool(
     name="sync_pause",
-    description="Pause syncing for a folder. Use this BEFORE batch file operations (renaming many files, large refactors, etc.) to prevent the user from seeing half-finished changes. Always call sync_resume() after the operation is complete.",
+    description="Pause syncing. Use BEFORE batch file operations (renaming many files, large refactors) to prevent the user from seeing half-finished changes. Always call sync_resume() after.",
     parameters={
         "type": "object",
-        "properties": {
-            "folder_id": {
-                "type": "string",
-                "description": "Synced folder ID. Default is 'default'.",
-                "default": "default",
-            },
-        },
+        "properties": {},
     },
 )
-def sync_pause(folder_id: str = "default") -> str:
-    """Pause syncing for a folder before batch operations."""
+def sync_pause() -> str:
+    """Pause syncing before batch operations."""
     try:
         st = _get_client()
+        folder_id = st.resolve_folder_id()
         st.pause_folder(folder_id)
         return (
-            f"⏸️ Folder '{folder_id}' sync paused.\n"
-            f"⚠️ Remember to call sync_resume(\"{folder_id}\") when done!"
+            "⏸️ Sync paused.\n"
+            "⚠️ Remember to call sync_resume() when done!"
         )
     except requests.ConnectionError:
         return "❌ Cannot connect to Syncthing. Is the service running?"
@@ -389,22 +401,17 @@ def sync_pause(folder_id: str = "default") -> str:
 
 @tool(
     name="sync_resume",
-    description="Resume syncing for a paused folder. Call this after batch file operations are complete so changes can sync to the user's machine.",
+    description="Resume syncing after batch file operations are complete so changes can sync to the user's machine.",
     parameters={
         "type": "object",
-        "properties": {
-            "folder_id": {
-                "type": "string",
-                "description": "Synced folder ID. Default is 'default'.",
-                "default": "default",
-            },
-        },
+        "properties": {},
     },
 )
-def sync_resume(folder_id: str = "default") -> str:
+def sync_resume() -> str:
     """Resume syncing for a paused folder."""
     try:
         st = _get_client()
+        folder_id = st.resolve_folder_id()
 
         # Trigger scan to pick up all changes, then resume
         try:
@@ -413,7 +420,7 @@ def sync_resume(folder_id: str = "default") -> str:
             pass
 
         st.resume_folder(folder_id)
-        return f"▶️ Folder '{folder_id}' sync resumed. Changes will now sync to the user."
+        return "▶️ Sync resumed. Changes will now sync to the user."
     except requests.ConnectionError:
         return "❌ Cannot connect to Syncthing. Is the service running?"
     except Exception as e:

@@ -13,6 +13,59 @@ from context.spill import spill_tool_output
 from context.compressor import compress_history, needs_compression
 
 
+def _sanitize_history(history: list) -> list:
+    """Ensure every assistant message with tool_calls has matching tool responses.
+
+    If a previous agent run crashed mid-execution, the history may contain an
+    assistant message with tool_calls but no (or incomplete) tool response messages.
+    This causes a 400 error from the LLM API.  We fix it by inserting placeholder
+    tool responses for any missing tool_call_ids.
+    """
+    fixed = []
+    i = 0
+    while i < len(history):
+        msg = history[i]
+        fixed.append(msg)
+
+        # Get role and tool_calls regardless of dict / object
+        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+        tool_calls = (
+            msg.get("tool_calls") if isinstance(msg, dict)
+            else getattr(msg, "tool_calls", None)
+        )
+
+        if role == "assistant" and tool_calls:
+            # Collect expected tool_call_ids
+            expected_ids = {tc.id if hasattr(tc, "id") else tc["id"] for tc in tool_calls}
+
+            # Walk forward and collect the existing tool responses
+            j = i + 1
+            while j < len(history):
+                nxt = history[j]
+                nxt_role = nxt.get("role") if isinstance(nxt, dict) else getattr(nxt, "role", None)
+                if nxt_role == "tool":
+                    tc_id = nxt.get("tool_call_id") if isinstance(nxt, dict) else getattr(nxt, "tool_call_id", None)
+                    expected_ids.discard(tc_id)
+                    fixed.append(nxt)
+                    j += 1
+                else:
+                    break
+
+            # Back-fill any missing tool responses
+            for missing_id in expected_ids:
+                fixed.append({
+                    "role": "tool",
+                    "tool_call_id": missing_id,
+                    "content": "[Error: tool call was not executed due to a previous error]",
+                })
+
+            i = j  # skip the tool messages we already consumed
+        else:
+            i += 1
+
+    return fixed
+
+
 # ── Pretty terminal output helpers ──────────────────────────────────────────
 
 def _fmt_tool_args(args: dict, max_val_len: int = 80) -> str:
@@ -147,6 +200,9 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
                         "new_messages": len(history),
                     })
 
+            # ── Sanitize history: fix orphaned tool_calls from crashed runs ──
+            history = _sanitize_history(history)
+
             completion = call_llm(history, model=active_model, tools=tools_schema)
 
             msg = completion.choices[0].message
@@ -237,7 +293,19 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
 
                 func = tools_map.get(tool_name)
                 if func:
-                    tool_result = str(func(**args))
+                    # Filter out hallucinated args the function doesn't accept
+                    import inspect
+                    sig = inspect.signature(func)
+                    valid_params = set(sig.parameters.keys())
+                    has_var_keyword = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD
+                        for p in sig.parameters.values()
+                    )
+                    if not has_var_keyword:
+                        filtered_args = {k: v for k, v in args.items() if k in valid_params}
+                    else:
+                        filtered_args = args
+                    tool_result = str(func(**filtered_args))
                 else:
                     tool_result = f"Error: unknown tool {tool_name}"
 
