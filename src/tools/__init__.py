@@ -22,3 +22,10 @@ if composio_tools.is_enabled():
     composio_tools.init()
     tools_schema = tools_schema + composio_tools.get_tools_schema()
 
+    # Register trigger management tools (LLM-callable)
+    from tools import composio_trigger_tools  # noqa: F401
+    # Re-fetch after trigger tools are registered
+    tools_map = get_tools_map()
+    tools_schema_updated = get_tools_schema()
+    # Merge: keep Composio meta-tools + our trigger tools
+    tools_schema = tools_schema_updated + composio_tools.get_tools_schema()

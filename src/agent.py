@@ -389,6 +389,10 @@ def main():
     history: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
     print("🚀 Agent started (Ctrl+C to interrupt, type 'exit' to quit)")
 
+    # Start Composio trigger listener (if enabled)
+    from composio_triggers import start_listener as start_trigger_listener
+    start_trigger_listener()
+
     # Session-wide token stats (cumulative across multiple agent_loop calls)
     session_token_stats = make_empty_token_stats()
 

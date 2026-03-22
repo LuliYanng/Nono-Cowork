@@ -46,3 +46,8 @@ MEMORY_MAX_INJECT_CHARS = 2000      # Max chars of memory to inject into system 
 # ── Composio (optional) ──
 COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY", "").strip()
 COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default").strip()
+COMPOSIO_AUTH_WAIT_TIMEOUT = int(os.getenv("COMPOSIO_AUTH_WAIT_TIMEOUT", "300"))  # seconds
+
+# ── Webhook / Composio Triggers ──
+WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "9090"))
+SERVER_HOST = os.getenv("SERVER_HOST", "").strip()  # Public hostname/IP for webhooks

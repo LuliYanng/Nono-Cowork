@@ -11,10 +11,13 @@ Composio is only initialized when COMPOSIO_API_KEY is set in the environment.
 
 import json
 import logging
+import threading
 from composio import Composio
 from composio_openai import OpenAIProvider
 
-from config import COMPOSIO_API_KEY, COMPOSIO_USER_ID
+from config import COMPOSIO_API_KEY, COMPOSIO_USER_ID, COMPOSIO_AUTH_WAIT_TIMEOUT
+
+AUTH_WAIT_TIMEOUT = COMPOSIO_AUTH_WAIT_TIMEOUT
 
 logger = logging.getLogger("tools.composio")
 
@@ -65,6 +68,192 @@ def is_composio_tool(tool_name: str) -> bool:
     """Check if a tool name is a Composio meta-tool."""
     return tool_name.startswith("COMPOSIO_")
 
+def _find_initiated_connection_id(toolkit: str) -> str | None:
+    """Find the most recently initiated/initializing connection ID for a toolkit.
+
+    The MANAGE_CONNECTIONS response returns status "initiated" (lowercase), but
+    the actual API status is "INITIALIZING" (not "INITIATED"). We search for
+    both to be safe, and also fall back to a broader search without toolkit
+    filter since the toolkit_slugs parameter may not match.
+    """
+    # Status values to search: MANAGE_CONNECTIONS says "initiated",
+    # but the real API uses "INITIALIZING" and "INITIATED"
+    search_statuses = ["INITIALIZING", "INITIATED"]
+
+    try:
+        # Try with toolkit filter first
+        conns = _composio_client.connected_accounts.list(
+            user_ids=[COMPOSIO_USER_ID],
+            toolkit_slugs=[toolkit],
+            statuses=search_statuses,
+            order_by="created_at",
+            order_direction="desc",
+            limit=1,
+        )
+        if conns.items:
+            logger.info("Found connection_id %s for %s (with toolkit filter)",
+                        conns.items[0].id, toolkit)
+            return conns.items[0].id
+
+        # Fallback: search without toolkit filter, then match manually
+        # (toolkit_slugs filter might not work with all API versions)
+        conns = _composio_client.connected_accounts.list(
+            user_ids=[COMPOSIO_USER_ID],
+            statuses=search_statuses,
+            order_by="created_at",
+            order_direction="desc",
+            limit=10,
+        )
+        for c in conns.items:
+            # Check toolkit.slug in the nested structure
+            tk = getattr(c, "toolkit", None)
+            tk_slug = tk.get("slug", "") if isinstance(tk, dict) else getattr(tk, "slug", "")
+            if tk_slug == toolkit:
+                logger.info("Found connection_id %s for %s (fallback match)",
+                            c.id, toolkit)
+                return c.id
+
+    except Exception as e:
+        logger.warning("Failed to find connection_id for %s: %s", toolkit, e)
+    return None
+
+
+# ── Background auth completion watchers ──
+_auth_watchers: dict[str, threading.Thread] = {}
+
+
+def _start_auth_watcher(toolkit: str, conn_id: str):
+    """Start a background thread that waits for auth completion.
+
+    When the auth is completed, dispatches a synthetic message through the
+    user's active IM channel (or appends to CLI history) so the agent
+    continues automatically without the user having to type "I've authorized".
+    """
+    if toolkit in _auth_watchers and _auth_watchers[toolkit].is_alive():
+        logger.info("Auth watcher for %s already running, skipping", toolkit)
+        return
+
+    # Capture execution context NOW (from the current thread)
+    # because the watcher thread won't have it.
+    try:
+        from context import get_context
+        ctx = get_context()
+        captured_user_id = ctx.get("user_id")
+        captured_channel = ctx.get("channel_name")
+    except Exception:
+        captured_user_id = None
+        captured_channel = None
+
+    def _watch():
+        logger.info(
+            "Auth watcher started for %s (conn_id=%s, timeout=%ds)",
+            toolkit, conn_id, AUTH_WAIT_TIMEOUT,
+        )
+        try:
+            result = _composio_client.connected_accounts.wait_for_connection(
+                id=conn_id,
+                timeout=AUTH_WAIT_TIMEOUT,
+            )
+            final_status = getattr(result, "status", "unknown")
+
+            if final_status == "ACTIVE":
+                logger.info("%s auth completed successfully!", toolkit)
+                _notify_auth_completed(toolkit, success=True,
+                                       user_id=captured_user_id)
+            else:
+                logger.warning("%s auth ended with status: %s", toolkit, final_status)
+                _notify_auth_completed(toolkit, success=False, status=final_status,
+                                       user_id=captured_user_id)
+        except Exception as e:
+            logger.warning("Auth watcher for %s failed: %s", toolkit, e)
+            _notify_auth_completed(toolkit, success=False, status="timeout",
+                                   user_id=captured_user_id)
+        finally:
+            _auth_watchers.pop(toolkit, None)
+
+    t = threading.Thread(target=_watch, name=f"auth-watcher-{toolkit}", daemon=True)
+    _auth_watchers[toolkit] = t
+    t.start()
+
+
+def _notify_auth_completed(toolkit: str, success: bool, status: str = "ACTIVE",
+                           user_id: str = None):
+    """Send a synthetic message to the agent indicating auth completion.
+
+    This triggers a new agent_loop iteration without the user having to
+    manually type "I've authorized".
+    """
+    if success:
+        message = (
+            f"[System notification: {toolkit} authorization completed successfully. "
+            f"The {toolkit} connection is now active. "
+            f"You can now proceed with the original task that required {toolkit}.]"
+        )
+    else:
+        message = (
+            f"[System notification: {toolkit} authorization was not completed "
+            f"(status: {status}). The user may need to try the authorization link again.]"
+        )
+
+    if user_id:
+        # IM channel mode: dispatch through agent_runner
+        try:
+            from channels.registry import list_channels, get_channel
+            from agent_runner import run_agent_for_message
+            channel_names = list_channels()
+            if channel_names:
+                channel = get_channel(channel_names[0])
+                if channel:
+                    def reply_func(text):
+                        channel.send_reply(user_id, text)
+                    def status_func(text):
+                        channel.send_status(user_id, text)
+                    t = threading.Thread(
+                        target=run_agent_for_message,
+                        args=(user_id, message, reply_func, status_func, f"{channel.name}:auth"),
+                        daemon=True,
+                    )
+                    t.start()
+                    return
+        except ImportError:
+            pass
+
+    # CLI / fallback: log the event — the user is expected to continue the
+    # conversation anyway (the auth result will be picked up on next tool use).
+    logger.info("Auth notification (no IM channel): %s", message)
+
+
+def _maybe_start_auth_watchers(raw_result: dict):
+    """Check MANAGE_CONNECTIONS result for pending connections and start background watchers."""
+    data = raw_result.get("data", {})
+    results = data.get("results", {})
+    if not results:
+        return
+
+    for toolkit, info in results.items():
+        status = info.get("status")
+        if status != "initiated":
+            continue
+
+        # Find the connection_id
+        conn_id = (
+            info.get("connection_id")
+            or info.get("connectedAccountId")
+            or _find_initiated_connection_id(toolkit)
+        )
+
+        if not conn_id:
+            logger.warning(
+                "Cannot find connection_id for %s — "
+                "user will need to confirm manually",
+                toolkit,
+            )
+            continue
+
+        # Start background watcher (non-blocking)
+        _start_auth_watcher(toolkit, conn_id)
+
+
 
 def execute(tool_name: str, arguments: dict) -> str:
     """Execute a Composio tool and return the cleaned result as a JSON string.
@@ -86,6 +275,11 @@ def execute(tool_name: str, arguments: dict) -> str:
             user_id=COMPOSIO_USER_ID,
             dangerously_skip_version_check=True,
         )
+
+        # Start background auth watchers for any initiated connections
+        if tool_name == "COMPOSIO_MANAGE_CONNECTIONS":
+            _maybe_start_auth_watchers(raw_result)
+
         # TODO: Re-enable cleaning after functionality is verified
         # cleaned = _clean_tool_result(tool_name, raw_result)
         return json.dumps(raw_result, ensure_ascii=False)

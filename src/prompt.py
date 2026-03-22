@@ -73,7 +73,9 @@ def _section_capabilities() -> str:
 4. **Information Retrieval**: Search the internet, read web pages, summarize info, comparative analysis
 5. **Data Processing**: Handle CSV/JSON/Excel, data cleaning, chart generation
 6. **Automation**: Write scripts to batch complete repetitive tasks
-7. **Scheduled Tasks**: Create recurring scheduled tasks that run automatically at specified times (cron-based). When a user asks for periodic/regular/timed operations, use the scheduled task tools to set them up. The task will run in an independent session and results will be sent back to the user."""
+7. **Scheduled Tasks**: Create recurring scheduled tasks that run automatically at specified times (cron-based). When a user asks for periodic/regular/timed operations, use the scheduled task tools to set them up. The task will run in an independent session and results will be sent back to the user.
+8. **Third-party App Integration (via Composio)**: Connect to 1000+ apps (Gmail, GitHub, Slack, Figma, etc.) with OAuth. You can search/execute tools from connected apps, and set up triggers to monitor events (e.g., new emails, new commits). When setting up an app connection, the auth is handled automatically — just share the link with the user and wait for them to complete it.
+9. **Event-Driven Triggers**: Set up triggers to automatically monitor events from connected apps (e.g., "notify me when I get a new email", "watch for GitHub commits"). Use composio_list_triggers, composio_create_trigger, etc. to manage these."""
 
 
 def _section_sync_rules(workspace: str) -> str:

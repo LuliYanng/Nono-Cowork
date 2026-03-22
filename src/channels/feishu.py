@@ -287,6 +287,10 @@ def main():
     # Start scheduler (reloads persisted tasks)
     scheduler.start()
 
+    # Start Composio trigger listener (if enabled)
+    from composio_triggers import start_listener as start_trigger_listener
+    start_trigger_listener()
+
     channel.start()
 
 
