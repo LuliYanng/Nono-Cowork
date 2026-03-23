@@ -123,11 +123,11 @@ _auth_watchers: dict[str, threading.Thread] = {}
 
 
 def _start_auth_watcher(toolkit: str, conn_id: str):
-    """Start a background thread that waits for auth completion.
+    """Start a background thread that polls for auth completion.
 
-    When the auth is completed, dispatches a synthetic message through the
-    user's active IM channel (or appends to CLI history) so the agent
-    continues automatically without the user having to type "I've authorized".
+    Instead of waiting on a specific connection_id (which breaks when the user
+    re-initiates auth and gets a new connection_id), we poll to check if the
+    toolkit has ANY active connection for this user.
     """
     if toolkit in _auth_watchers and _auth_watchers[toolkit].is_alive():
         logger.info("Auth watcher for %s already running, skipping", toolkit)
@@ -145,58 +145,86 @@ def _start_auth_watcher(toolkit: str, conn_id: str):
         captured_channel = None
 
     def _watch():
+        import time
         logger.info(
-            "Auth watcher started for %s (conn_id=%s, timeout=%ds)",
-            toolkit, conn_id, AUTH_WAIT_TIMEOUT,
+            "Auth watcher started for %s (timeout=%ds)",
+            toolkit, AUTH_WAIT_TIMEOUT,
         )
-        try:
-            result = _composio_client.connected_accounts.wait_for_connection(
-                id=conn_id,
-                timeout=AUTH_WAIT_TIMEOUT,
-            )
-            final_status = getattr(result, "status", "unknown")
+        deadline = time.time() + AUTH_WAIT_TIMEOUT
+        poll_interval = 1  # seconds
 
-            if final_status == "ACTIVE":
-                logger.info("%s auth completed successfully!", toolkit)
-                _notify_auth_completed(toolkit, success=True,
-                                       user_id=captured_user_id)
-            else:
-                logger.warning("%s auth ended with status: %s", toolkit, final_status)
-                _notify_auth_completed(toolkit, success=False, status=final_status,
-                                       user_id=captured_user_id)
-        except Exception as e:
-            logger.warning("Auth watcher for %s failed: %s", toolkit, e)
-            _notify_auth_completed(toolkit, success=False, status="timeout",
-                                   user_id=captured_user_id)
-        finally:
-            _auth_watchers.pop(toolkit, None)
+        while time.time() < deadline:
+            try:
+                # Try with toolkit filter first
+                conns = _composio_client.connected_accounts.list(
+                    user_ids=[COMPOSIO_USER_ID],
+                    toolkit_slugs=[toolkit],
+                    statuses=["ACTIVE"],
+                    order_by="created_at",
+                    order_direction="desc",
+                    limit=1,
+                )
+                if conns.items:
+                    logger.info("%s auth completed successfully!", toolkit)
+                    _notify_auth_completed(toolkit, success=True,
+                                           user_id=captured_user_id)
+                    return
 
-    t = threading.Thread(target=_watch, name=f"auth-watcher-{toolkit}", daemon=True)
+                # Fallback: search without toolkit filter, match manually
+                conns = _composio_client.connected_accounts.list(
+                    user_ids=[COMPOSIO_USER_ID],
+                    statuses=["ACTIVE"],
+                    order_by="created_at",
+                    order_direction="desc",
+                    limit=10,
+                )
+                for c in conns.items:
+                    tk = getattr(c, "toolkit", None)
+                    tk_slug = tk.get("slug", "") if isinstance(tk, dict) else getattr(tk, "slug", "")
+                    if tk_slug == toolkit:
+                        logger.info("%s auth completed (fallback match)!", toolkit)
+                        _notify_auth_completed(toolkit, success=True,
+                                               user_id=captured_user_id)
+                        return
+            except Exception as e:
+                logger.debug("Auth watcher poll error for %s: %s", toolkit, e)
+
+            time.sleep(poll_interval)
+
+        # Timeout
+        logger.warning("Auth watcher for %s timed out after %ds", toolkit, AUTH_WAIT_TIMEOUT)
+        _notify_auth_completed(toolkit, success=False, status="timeout",
+                               user_id=captured_user_id)
+
+    def _watch_cleanup():
+        _watch()
+        _auth_watchers.pop(toolkit, None)
+
+    t = threading.Thread(target=_watch_cleanup, name=f"auth-watcher-{toolkit}", daemon=True)
     _auth_watchers[toolkit] = t
     t.start()
 
 
 def _notify_auth_completed(toolkit: str, success: bool, status: str = "ACTIVE",
                            user_id: str = None):
-    """Send a synthetic message to the agent indicating auth completion.
+    """Auto-continue the agent loop after auth completion.
 
-    This triggers a new agent_loop iteration without the user having to
-    manually type "I've authorized".
+    For IM channels: injects a synthetic user message ("connected to xxx")
+    and triggers a new agent_loop iteration, so the agent can continue the
+    original task without the user having to manually type anything.
+
+    For CLI: prints a notification (can't inject into blocking input()).
     """
     if success:
-        message = (
-            f"[System notification: {toolkit} authorization completed successfully. "
-            f"The {toolkit} connection is now active. "
-            f"You can now proceed with the original task that required {toolkit}.]"
-        )
+        message = f"I've connected to {toolkit} successfully. Please continue with the original task."
     else:
         message = (
-            f"[System notification: {toolkit} authorization was not completed "
-            f"(status: {status}). The user may need to try the authorization link again.]"
+            f"{toolkit} authorization was not completed (status: {status}). "
+            "Please try again if needed."
         )
 
     if user_id:
-        # IM channel mode: dispatch through agent_runner
+        # IM channel mode: auto-trigger agent loop with the synthetic message
         try:
             from channels.registry import list_channels, get_channel
             from agent_runner import run_agent_for_message
@@ -208,6 +236,7 @@ def _notify_auth_completed(toolkit: str, success: bool, status: str = "ACTIVE",
                         channel.send_reply(user_id, text)
                     def status_func(text):
                         channel.send_status(user_id, text)
+                    logger.info("Auto-triggering agent loop for %s auth completion", toolkit)
                     t = threading.Thread(
                         target=run_agent_for_message,
                         args=(user_id, message, reply_func, status_func, f"{channel.name}:auth"),
@@ -215,12 +244,12 @@ def _notify_auth_completed(toolkit: str, success: bool, status: str = "ACTIVE",
                     )
                     t.start()
                     return
-        except ImportError:
-            pass
+        except Exception as e:
+            logger.warning("Failed to auto-trigger agent loop: %s", e)
 
-    # CLI / fallback: log the event — the user is expected to continue the
-    # conversation anyway (the auth result will be picked up on next tool use).
-    logger.info("Auth notification (no IM channel): %s", message)
+    # CLI / fallback: print notification (can't inject into input())
+    print(f"\n✅ Connected to {toolkit}! You can continue with your request.")
+    logger.info("Auth notification (stdout): %s", message)
 
 
 def _maybe_start_auth_watchers(raw_result: dict):

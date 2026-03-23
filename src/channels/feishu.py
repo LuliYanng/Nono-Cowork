@@ -274,6 +274,8 @@ def main():
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    # Suppress noisy httpx logs (Composio SDK telemetry)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     # Recover any orphaned log files from previous crashes
     recover_orphaned_logs()
