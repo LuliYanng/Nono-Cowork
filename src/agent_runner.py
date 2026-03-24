@@ -12,7 +12,8 @@ logger = logging.getLogger("agent_runner")
 
 def run_agent_for_message(user_id: str, user_text: str,
                           reply_func, status_func=None,
-                          channel_name: str = "unknown"):
+                          channel_name: str = "unknown",
+                          on_event_hook=None):
     """
     Run Agent in the calling thread and reply via callback functions.
 
@@ -24,6 +25,7 @@ def run_agent_for_message(user_id: str, user_text: str,
         reply_func: Callback function to send the result: reply_func(text)
         status_func: Optional callback for status updates: status_func(text)
         channel_name: Channel name (for logging)
+        on_event_hook: Optional callback for structured agent events: on_event_hook(evt)
     """
     from agent import agent_loop
     from logger import log_event
@@ -71,6 +73,9 @@ def run_agent_for_message(user_id: str, user_text: str,
                 # Only show generic tool status if no narration was sent this round
                 if round_num not in narrated_rounds:
                     status_func(f"🔧 {evt['tool_name']}")
+            # Forward structured event to external hook (e.g. desktop SSE)
+            if on_event_hook:
+                on_event_hook(evt)
 
         # Stop checker: agent_loop calls this to check if /stop was requested
         def check_stop():

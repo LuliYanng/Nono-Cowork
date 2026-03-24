@@ -14,8 +14,9 @@ import {
   PromptInput,
   PromptInputTextarea,
   PromptInputFooter,
-  PromptInputButton,
+  PromptInputSubmit,
 } from "@/components/ai-elements/prompt-input";
+import { ThinkingSteps, type ThoughtStep } from "@/components/ThinkingSteps";
 
 // ── Types ──
 
@@ -23,6 +24,7 @@ interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  thoughtSteps?: ThoughtStep[];
 }
 
 interface SessionStatus {
@@ -50,6 +52,12 @@ function App() {
   });
   const [connected, setConnected] = useState<boolean | null>(null);
   const idCounter = useRef(0);
+  const inputRef = useRef(input);
+  inputRef.current = input;
+  // Track which assistant message is currently being streamed (for animation)
+  const [animatingMsgId, setAnimatingMsgId] = useState<string | null>(null);
+  // Track which assistant message is actively receiving thought events
+  const [thinkingMsgId, setThinkingMsgId] = useState<string | null>(null);
 
   // Health check on mount
   useEffect(() => {
@@ -79,9 +87,9 @@ function App() {
     }
   }, []);
 
-  // Send message
+  // Send message — called by PromptInput onSubmit with { text, files }
   const handleSubmit = useCallback(async () => {
-    const text = input.trim();
+    const text = inputRef.current.trim();
     if (!text || isStreaming) return;
 
     // Add user message
@@ -93,6 +101,7 @@ function App() {
 
     // Prepare assistant message placeholder
     const assistantId = nextId();
+    const currentThoughtSteps: ThoughtStep[] = [];
     let assistantContent = "";
 
     try {
@@ -136,8 +145,42 @@ function App() {
 
               if (eventType === "status") {
                 setStatusText(data.text);
+              } else if (eventType === "thought") {
+                // Collect structured thought steps
+                const step: ThoughtStep = {
+                  type: data.type,
+                  round: data.round,
+                  content: data.content,
+                  toolName: data.tool_name,
+                  args: data.args,
+                  result: data.result,
+                };
+                currentThoughtSteps.push(step);
+                setThinkingMsgId(assistantId);
+                // Update the thought steps in messages state
+                setMessages((prev) => {
+                  const existing = prev.find((m) => m.id === assistantId);
+                  if (existing) {
+                    return prev.map((m) =>
+                      m.id === assistantId
+                        ? { ...m, thoughtSteps: [...currentThoughtSteps] }
+                        : m
+                    );
+                  } else {
+                    return [
+                      ...prev,
+                      {
+                        id: assistantId,
+                        role: "assistant" as const,
+                        content: "",
+                        thoughtSteps: [...currentThoughtSteps],
+                      },
+                    ];
+                  }
+                });
               } else if (eventType === "reply") {
                 assistantContent = data.text;
+                setAnimatingMsgId(assistantId);
                 setMessages((prev) => {
                   const existing = prev.find((m) => m.id === assistantId);
                   if (existing) {
@@ -153,6 +196,7 @@ function App() {
                         id: assistantId,
                         role: "assistant" as const,
                         content: assistantContent,
+                        thoughtSteps: [...currentThoughtSteps],
                       },
                     ];
                   }
@@ -179,10 +223,12 @@ function App() {
       ]);
     } finally {
       setIsStreaming(false);
+      setAnimatingMsgId(null);
+      setThinkingMsgId(null);
       setStatusText("");
       refreshStatus();
     }
-  }, [input, isStreaming, nextId, refreshStatus]);
+  }, [isStreaming, nextId, refreshStatus]);
 
   // Slash commands
   const handleCommand = useCallback(
@@ -235,6 +281,11 @@ function App() {
         ? "bg-yellow-500"
         : "bg-red-500";
 
+  // PromptInput onSubmit handler — receives { text, files } from the component
+  const handlePromptSubmit = useCallback(async () => {
+    await handleSubmit();
+  }, [handleSubmit]);
+
   return (
     <TooltipProvider>
       <div className="flex flex-col h-screen bg-background text-foreground">
@@ -280,14 +331,29 @@ function App() {
               <Message key={msg.id} from={msg.role}>
                 <MessageContent>
                   {msg.role === "assistant" ? (
-                    <MessageResponse>{msg.content}</MessageResponse>
+                    <>
+                      {msg.thoughtSteps && msg.thoughtSteps.length > 0 && (
+                        <ThinkingSteps
+                          steps={msg.thoughtSteps}
+                          isActive={msg.id === thinkingMsgId}
+                        />
+                      )}
+                      {msg.content && (
+                        <MessageResponse
+                          animated
+                          isAnimating={msg.id === animatingMsgId}
+                        >
+                          {msg.content}
+                        </MessageResponse>
+                      )}
+                    </>
                   ) : (
                     <p className="whitespace-pre-wrap">{msg.content}</p>
                   )}
                 </MessageContent>
               </Message>
             ))}
-            {isStreaming && statusText && (
+            {isStreaming && !animatingMsgId && statusText && (
               <div className="text-sm text-muted-foreground animate-pulse px-1">
                 {statusText}
               </div>
@@ -299,14 +365,19 @@ function App() {
         {/* Input area */}
         <div className="border-t border-border p-3">
           <PromptInput
-            value={input}
-            onValueChange={setInput}
-            onSubmit={handleSubmit}
-            isLoading={isStreaming}
+            onSubmit={handlePromptSubmit}
           >
-            <PromptInputTextarea placeholder="Type a message..." />
+            <PromptInputTextarea
+              placeholder="Type a message..."
+              value={input}
+              onChange={(e) => setInput(e.currentTarget.value)}
+            />
             <PromptInputFooter>
-              <PromptInputButton type="submit" disabled={isStreaming || !input.trim()} />
+              <div />
+              <PromptInputSubmit
+                disabled={isStreaming || !input.trim()}
+                status={isStreaming ? "streaming" : "ready"}
+              />
             </PromptInputFooter>
           </PromptInput>
         </div>

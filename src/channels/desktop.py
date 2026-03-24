@@ -84,6 +84,34 @@ class DesktopChannel(Channel):
         def status_func(text):
             self.send_status(user_id, text)
 
+        # Forward structured agent events as SSE "thought" events
+        def event_hook(evt):
+            evt_type = evt.get("type")
+            if evt_type == "narration":
+                self._push_event(user_id, "thought", {
+                    "type": "narration",
+                    "content": evt.get("content", ""),
+                    "round": evt.get("round"),
+                })
+            elif evt_type == "tool_call":
+                self._push_event(user_id, "thought", {
+                    "type": "tool_call",
+                    "tool_name": evt.get("tool_name", ""),
+                    "args": evt.get("args", {}),
+                    "round": evt.get("round"),
+                })
+            elif evt_type == "tool_result":
+                # Truncate large results for SSE transport
+                result = evt.get("result", "")
+                if len(result) > 500:
+                    result = result[:500] + f"… ({len(result)} chars)"
+                self._push_event(user_id, "thought", {
+                    "type": "tool_result",
+                    "tool_name": evt.get("tool_name", ""),
+                    "result": result,
+                    "round": evt.get("round"),
+                })
+
         # Check slash commands first (reuse base class logic)
         user_text_stripped = user_text.strip()
         if user_text_stripped.startswith("/"):
@@ -108,6 +136,7 @@ class DesktopChannel(Channel):
             user_id, user_text_stripped,
             reply_func, status_func,
             channel_name=self.name,
+            on_event_hook=event_hook,
         )
         self._push_event(user_id, "done", {})
 
