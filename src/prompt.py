@@ -13,6 +13,8 @@ import os
 import time
 import logging
 
+from config import COMPOSIO_API_KEY, COMPOSIO_USER_ID
+
 logger = logging.getLogger("prompt")
 
 # ─── Workspace resolution ───────────────────────────────────────
@@ -64,6 +66,151 @@ def _section_environment(workspace: str) -> str:
 - Document processing libraries available: pymupdf (PDF), openpyxl (Excel), python-docx (Word)"""
 
 
+# ─── Service status probes ──────────────────────────────────────
+
+def _probe_syncthing() -> str:
+    """Quick Syncthing health check (localhost API, <50ms)."""
+    try:
+        from tools.syncthing import SyncthingClient
+        st = SyncthingClient()
+
+        # Connection status
+        conns = st.get_connections().get("connections", {})
+        online = []
+        offline = []
+        for dev_id, info in conns.items():
+            short_id = dev_id[:12]
+            if info.get("connected"):
+                online.append(short_id)
+            else:
+                offline.append(short_id)
+
+        if online:
+            device_status = f"🟢 online ({len(online)} device{'s' if len(online) > 1 else ''})"
+        elif offline:
+            device_status = f"🔴 offline ({len(offline)} device{'s' if len(offline) > 1 else ''}, all disconnected)"
+        else:
+            device_status = "⚠️ no remote devices configured"
+
+        # Folder status
+        folders = st.get_folders()
+        folder_lines = []
+        for f in folders:
+            fid = f["id"]
+            try:
+                status = st.get_folder_status(fid)
+                state = status.get("state", "unknown")
+                local_files = status.get("localFiles", 0)
+                paused = " ⏸️paused" if f.get("paused") else ""
+                folder_lines.append(
+                    f"  - {f.get('label', fid)}: {f['path']} "
+                    f"(state: {state}, {local_files} files{paused})"
+                )
+            except Exception:
+                folder_lines.append(f"  - {f.get('label', fid)}: status unavailable")
+
+        return (
+            f"## Syncthing (File Sync)\n"
+            f"- Service: ✅ running\n"
+            f"- User device: {device_status}\n"
+            f"- Folders:\n" + "\n".join(folder_lines)
+        )
+    except Exception as e:
+        logger.debug("Syncthing probe failed: %s", e)
+        return "## Syncthing (File Sync)\n- Service: ❌ unreachable"
+
+
+_COMPOSIO_PROBE_TIMEOUT = 5  # seconds — hard cap to avoid blocking session startup
+
+
+def _probe_composio() -> str:
+    """Quick Composio status check (remote API, hard timeout).
+
+    Runs the actual API calls in a daemon thread with a hard timeout
+    so a slow/unreachable Composio API can never block session creation.
+    """
+    if not COMPOSIO_API_KEY:
+        return ""  # Not configured, skip entirely
+
+    import threading
+
+    result_holder: list[str] = []
+
+    def _do_probe():
+        try:
+            from composio import Composio
+            client = Composio()
+
+            # Connected apps (ACTIVE accounts)
+            conns = client.connected_accounts.list(
+                user_ids=[COMPOSIO_USER_ID],
+                statuses=["ACTIVE"],
+                limit=20,
+            )
+            apps = set()
+            for c in conns.items:
+                tk = getattr(c, "toolkit", None)
+                slug = tk.get("slug", "") if isinstance(tk, dict) else getattr(tk, "slug", "")
+                if slug:
+                    apps.add(slug)
+
+            # Active triggers
+            triggers_resp = client.triggers.list_active()
+            trigger_items = getattr(triggers_resp, "items", []) or []
+            trigger_list = []
+            for t in trigger_items:
+                name = (getattr(t, "trigger_name", None)
+                        or getattr(t, "triggerName", None)
+                        or str(t))
+                trigger_list.append(name)
+
+            apps_str = ", ".join(sorted(apps)) if apps else "none yet"
+            triggers_str = ", ".join(trigger_list) if trigger_list else "none"
+
+            result_holder.append(
+                f"## Composio (Third-party Apps)\n"
+                f"- Status: ✅ enabled\n"
+                f"- Connected apps: {apps_str}\n"
+                f"- Active triggers: {triggers_str}"
+            )
+        except Exception as e:
+            logger.debug("Composio probe failed: %s", e)
+            result_holder.append(
+                f"## Composio (Third-party Apps)\n- Status: ⚠️ probe failed ({e})"
+            )
+
+    t = threading.Thread(target=_do_probe, daemon=True)
+    t.start()
+    t.join(timeout=_COMPOSIO_PROBE_TIMEOUT)
+
+    if result_holder:
+        return result_holder[0]
+    logger.debug("Composio probe timed out after %ds", _COMPOSIO_PROBE_TIMEOUT)
+    return "## Composio (Third-party Apps)\n- Status: ⚠️ probe timed out"
+
+
+def _section_service_status() -> str:
+    """Probe live status of infrastructure services at session start.
+
+    Provides the agent with immediate awareness of:
+      - Syncthing: running? user device online? folder health?
+      - Composio: enabled? connected apps? active triggers?
+
+    This eliminates the need for the agent to call diagnostic tools
+    in the first turn just to understand the environment.
+    """
+    parts = [
+        _probe_syncthing(),
+        _probe_composio(),
+    ]
+    parts = [p for p in parts if p]
+
+    if not parts:
+        return ""
+
+    return "# Current Service Status (probed at session start)\n" + "\n\n".join(parts)
+
+
 def _section_capabilities() -> str:
     return """\
 # What You Can Do
@@ -84,7 +231,7 @@ def _section_sync_rules(workspace: str) -> str:
 These rules ONLY apply when you create, modify, or delete files inside {workspace}.
 Do NOT call sync tools for operations outside {workspace} (e.g., installing skills, modifying project code).
 - Files in {workspace} auto-sync to the user's machine via Syncthing (2-3 seconds delay)
-- BEFORE your first file operation in {workspace}: call sync_status() to confirm sync is healthy and user device is online
+- BEFORE your first file operation in {workspace}: check the Syncthing status in "Current Service Status" above. Only call sync_status() if the status was unreachable or you need the latest state
 - AFTER you finish all file changes in {workspace}: call sync_wait() so the user receives the results
 - WHEN modifying/deleting/renaming 3+ files at once: call sync_pause() FIRST → do all changes → call sync_resume() when done. This prevents the user from seeing a half-finished state
 - WHEN the user reports a file was accidentally deleted or overwritten: call sync_versions() to list recoverable versions, then sync_restore() to bring it back. Also check list_snapshots() — every edit_file call auto-saves the original file before modifying it
@@ -177,6 +324,7 @@ def make_system_prompt() -> str:
     sections = [
         _section_role(workspace),
         _section_environment(workspace),
+        _section_service_status(),
         _section_capabilities(),
         _section_sync_rules(workspace),
         _section_skills(),

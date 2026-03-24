@@ -460,7 +460,7 @@ def list_active_triggers() -> str:
     try:
         from composio import Composio
         client = Composio()
-        triggers = client.triggers.list_active(user_ids=[COMPOSIO_USER_ID])
+        triggers = client.triggers.list_active()
 
         # Merge with local recipes for agent_prompt info
         recipes = _load_recipes()
