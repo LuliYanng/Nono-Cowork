@@ -176,7 +176,7 @@ function App() {
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setIsStreaming(true);
-    setStatusText("💭 Thinking...");
+    setStatusText("Thinking...");
 
     // Prepare assistant message placeholder
     const assistantId = nextId();
