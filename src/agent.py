@@ -8,7 +8,7 @@ from tools import tools_map, tools_schema
 from tools import composio_tools
 from config import MODEL, MAX_ROUNDS, CONTEXT_LIMIT
 from prompt import make_system_prompt
-from llm import call_llm, extract_cache_info, update_token_stats, make_empty_token_stats
+from llm import call_llm, call_llm_stream, extract_cache_info, update_token_stats, make_empty_token_stats
 from logger import create_log_file, close_log_file, log_event, recover_orphaned_logs, serialize_message, serialize_usage
 from context.spill import spill_tool_output
 from context.compressor import compress_history, needs_compression
@@ -207,15 +207,94 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
             # ── Sanitize history: fix orphaned tool_calls from crashed runs ──
             history = _sanitize_history(history)
 
-            completion = call_llm(history, model=active_model, tools=tools_schema)
+            # ── Streaming LLM call ──
+            # Iterate over chunks, emit text_chunk/reasoning_chunk events in real-time,
+            # accumulate full content and tool_calls for post-processing.
+            stream = call_llm_stream(history, model=active_model, tools=tools_schema)
 
-            msg = completion.choices[0].message
+            accumulated_content = ""
+            accumulated_reasoning = ""
+            accumulated_tool_calls = {}  # id -> {name, arguments_str}
+            usage = None
+
+            for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+
+                # Capture usage from the final chunk (may not exist on all chunks)
+                chunk_usage = getattr(chunk, "usage", None)
+                if chunk_usage:
+                    usage = chunk_usage
+
+                if not delta:
+                    continue
+
+                # ── Reasoning chunks ──
+                reasoning_chunk = getattr(delta, "reasoning_content", None) or ""
+                if reasoning_chunk:
+                    accumulated_reasoning += reasoning_chunk
+                    print(f"\033[96m{reasoning_chunk}\033[0m", end="", flush=True)
+                    if on_event:
+                        on_event({"type": "reasoning_chunk", "content": reasoning_chunk, "round": round_num})
+
+                # ── Text chunks ──
+                text_chunk = delta.content or ""
+                if text_chunk:
+                    accumulated_content += text_chunk
+                    print(text_chunk, end="", flush=True)
+                    if on_event:
+                        on_event({"type": "text_chunk", "content": text_chunk, "round": round_num})
+
+                # ── Tool call chunks (accumulate, don't execute yet) ──
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in accumulated_tool_calls:
+                            accumulated_tool_calls[idx] = {
+                                "id": tc_delta.id or "",
+                                "name": (tc_delta.function.name or "") if tc_delta.function else "",
+                                "arguments": "",
+                            }
+                        entry = accumulated_tool_calls[idx]
+                        if tc_delta.id:
+                            entry["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                entry["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                entry["arguments"] += tc_delta.function.arguments
+
+            if accumulated_reasoning:
+                print()  # Newline after reasoning
+
+            # ── Post-stream: reconstruct the message object ──
+            # Build a message-like object compatible with history and downstream logic
+            from litellm import ModelResponse
+            from litellm.types.utils import Message as LitellmMessage, ChatCompletionMessageToolCall, Function
+
+            tool_calls_list = None
+            if accumulated_tool_calls:
+                tool_calls_list = []
+                for idx in sorted(accumulated_tool_calls):
+                    tc = accumulated_tool_calls[idx]
+                    tool_calls_list.append(ChatCompletionMessageToolCall(
+                        id=tc["id"],
+                        type="function",
+                        function=Function(name=tc["name"], arguments=tc["arguments"]),
+                    ))
+
+            msg = LitellmMessage(
+                role="assistant",
+                content=accumulated_content or None,
+                tool_calls=tool_calls_list,
+            )
+            if accumulated_reasoning:
+                msg.reasoning_content = accumulated_reasoning
 
             # Extract cache info & update token stats
-            cache_info = extract_cache_info(completion.usage)
-            usage = completion.usage
-            update_token_stats(token_stats, usage, cache_info)
-            last_prompt_tokens = usage.prompt_tokens or 0
+            cache_info = extract_cache_info(usage) if usage else {}
+            if usage:
+                update_token_stats(token_stats, usage, cache_info)
+                last_prompt_tokens = usage.prompt_tokens or 0
 
             # Log raw LLM response
             log_event(log_file, {
@@ -223,27 +302,22 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
                 "round": round_num,
                 "model": active_model,
                 "message": serialize_message(msg),
-                "usage": serialize_usage(completion.usage),
+                "usage": serialize_usage(usage) if usage else {},
                 "cache": cache_info,
                 "token_stats_cumulative": dict(token_stats),
             })
 
-            # Output reasoning (if any)
-            reasoning = getattr(msg, "reasoning_content", None)
-            if reasoning:
-                print(f"\033[96m{reasoning}\033[0m\n")
-                if on_event:
-                    on_event({"type": "reasoning", "content": reasoning, "round": round_num})
+            # Emit full reasoning event (for channels that don't handle chunks)
+            if accumulated_reasoning and on_event:
+                on_event({"type": "reasoning", "content": accumulated_reasoning, "round": round_num})
 
-            # Output text (if any)
+            # Clean up text: filter Qwen3's empty <think> tags
             final_text = ""
-            if msg.content:
-                # Filter out Qwen3's empty <think> tags, clean up extra blank lines
-                text = re.sub(r"<think>.*?</think>", "", msg.content, flags=re.DOTALL)
+            if accumulated_content:
+                text = re.sub(r"<think>.*?</think>", "", accumulated_content, flags=re.DOTALL)
                 text = re.sub(r"\n{3,}", "\n\n", text).strip()
                 if text:
                     final_text = text
-                    print(text, end="")
 
             # Append to history
             history.append(msg)

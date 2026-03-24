@@ -295,7 +295,65 @@ function App() {
                     ];
                   }
                 });
+              } else if (eventType === "text_chunk") {
+                // Streaming text — append chunk to assistant content in real-time
+                assistantContent += data.content;
+                setAnimatingMsgId(assistantId);
+                setMessages((prev) => {
+                  const existing = prev.find((m) => m.id === assistantId);
+                  if (existing) {
+                    return prev.map((m) =>
+                      m.id === assistantId
+                        ? { ...m, content: assistantContent }
+                        : m
+                    );
+                  } else {
+                    return [
+                      ...prev,
+                      {
+                        id: assistantId,
+                        role: "assistant" as const,
+                        content: assistantContent,
+                        thoughts: [...currentThoughts],
+                      },
+                    ];
+                  }
+                });
+              } else if (eventType === "reasoning_chunk") {
+                // Streaming reasoning — show as a live thought
+                // Find or create a reasoning entry in currentThoughts
+                const lastThought = currentThoughts[currentThoughts.length - 1];
+                if (lastThought && lastThought.type === "reasoning") {
+                  lastThought.content = (lastThought.content || "") + data.content;
+                } else {
+                  currentThoughts.push({
+                    type: "reasoning",
+                    content: data.content,
+                  });
+                }
+                setThinkingMsgId(assistantId);
+                setMessages((prev) => {
+                  const existing = prev.find((m) => m.id === assistantId);
+                  if (existing) {
+                    return prev.map((m) =>
+                      m.id === assistantId
+                        ? { ...m, thoughts: [...currentThoughts] }
+                        : m
+                    );
+                  } else {
+                    return [
+                      ...prev,
+                      {
+                        id: assistantId,
+                        role: "assistant" as const,
+                        content: "",
+                        thoughts: [...currentThoughts],
+                      },
+                    ];
+                  }
+                });
               } else if (eventType === "reply") {
+                // Final complete reply (fallback if text_chunk was not used)
                 assistantContent = data.text;
                 setAnimatingMsgId(assistantId);
                 setMessages((prev) => {

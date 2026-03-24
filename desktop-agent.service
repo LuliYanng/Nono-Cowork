@@ -1,0 +1,28 @@
+# Nono CoWork - Desktop Channel systemd service
+#
+# Setup:
+#   1. sudo cp desktop-agent.service /etc/systemd/system/
+#   2. sudo systemctl daemon-reload
+#   3. sudo systemctl enable --now desktop-agent
+#
+# Manage:
+#   sudo systemctl status desktop-agent       # check status
+#   sudo journalctl -u desktop-agent -f       # view logs
+#   sudo systemctl restart desktop-agent      # restart after code update
+
+[Unit]
+Description=Nono CoWork - Desktop Agent (HTTP + SSE API)
+After=network.target
+
+[Service]
+Type=simple
+User=google-server
+WorkingDirectory=/home/google-server/hands_on_agent/src
+ExecStart=/home/google-server/hands_on_agent/.venv/bin/python channels/desktop.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/home/google-server
+
+[Install]
+WantedBy=multi-user.target

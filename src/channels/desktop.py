@@ -84,19 +84,23 @@ class DesktopChannel(Channel):
         def status_func(text):
             self.send_status(user_id, text)
 
-        # Forward structured agent events as SSE "thought" events
+        # Forward structured agent events as SSE events
         def event_hook(evt):
             evt_type = evt.get("type")
-            if evt_type == "reasoning":
-                # LLM's internal reasoning (e.g. from thinking models)
-                content = evt.get("content", "")
-                if len(content) > 2000:
-                    content = content[:2000] + f"… ({len(content)} chars)"
-                self._push_event(user_id, "thought", {
-                    "type": "reasoning",
-                    "content": content,
-                    "round": evt.get("round"),
+            if evt_type == "text_chunk":
+                # Streaming text chunk — forward immediately for real-time display
+                self._push_event(user_id, "text_chunk", {
+                    "content": evt.get("content", ""),
                 })
+            elif evt_type == "reasoning_chunk":
+                # Streaming reasoning chunk
+                self._push_event(user_id, "reasoning_chunk", {
+                    "content": evt.get("content", ""),
+                })
+            elif evt_type == "reasoning":
+                # Full reasoning (for non-streaming consumers) — skip for desktop
+                # (desktop already received reasoning_chunk events)
+                pass
             elif evt_type == "narration":
                 self._push_event(user_id, "thought", {
                     "type": "narration",

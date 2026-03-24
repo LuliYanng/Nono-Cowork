@@ -36,17 +36,8 @@ def inject_cache_control(messages: list, model: str) -> list:
     return enhanced
 
 
-def call_llm(messages: list, model: str = None, tools: list = None):
-    """Call the LLM via LiteLLM with cache control and standard params.
-
-    Args:
-        messages: Conversation history
-        model: Model identifier (defaults to config.MODEL)
-        tools: Tool schemas list
-
-    Returns:
-        The raw LiteLLM completion response.
-    """
+def _build_llm_kwargs(messages: list, model: str = None, tools: list = None) -> dict:
+    """Build shared kwargs for LiteLLM calls (used by both stream and non-stream)."""
     model = model or MODEL
 
     kwargs = {
@@ -58,17 +49,47 @@ def call_llm(messages: list, model: str = None, tools: list = None):
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
 
+    # Determine provider prefix (e.g. "gemini", "anthropic", "deepseek")
+    _provider = model.split("/")[0] if "/" in model else ""
+
+    # Enable thinking/reasoning for models that support it
+    # LiteLLM maps reasoning_effort to Gemini's thinking_level automatically
+    # drop_params=True ensures this is safely ignored by models that don't support it
+    _THINKING_PROVIDERS = {"gemini", "anthropic"}
+    if _provider in _THINKING_PROVIDERS:
+        kwargs["reasoning_effort"] = "medium"  # "low" or "high"; Gemini 3 can't fully disable
+
     # Only pass custom API_BASE/API_KEY for models that use the custom endpoint.
     # Providers with their own env vars (GEMINI_API_KEY, ANTHROPIC_API_KEY, etc.)
     # should NOT use the custom endpoint — litellm resolves them automatically.
     _SELF_AUTH_PROVIDERS = {"gemini", "anthropic", "deepseek"}
-    _provider = model.split("/")[0] if "/" in model else ""
     _use_custom_endpoint = API_BASE and _provider not in _SELF_AUTH_PROVIDERS
     if _use_custom_endpoint:
         kwargs["api_base"] = API_BASE
     if _use_custom_endpoint and API_KEY:
         kwargs["api_key"] = API_KEY
 
+    return kwargs
+
+
+def call_llm(messages: list, model: str = None, tools: list = None):
+    """Call the LLM via LiteLLM (non-streaming). Used for context compression etc.
+
+    Returns:
+        The raw LiteLLM completion response.
+    """
+    return litellm.completion(**_build_llm_kwargs(messages, model, tools))
+
+
+def call_llm_stream(messages: list, model: str = None, tools: list = None):
+    """Call the LLM via LiteLLM with streaming enabled.
+
+    Returns:
+        A streaming iterator of chunk objects.
+    """
+    kwargs = _build_llm_kwargs(messages, model, tools)
+    kwargs["stream"] = True
+    kwargs["stream_options"] = {"include_usage": True}  # Get usage in final chunk
     return litellm.completion(**kwargs)
 
 
