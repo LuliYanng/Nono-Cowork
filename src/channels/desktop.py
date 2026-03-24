@@ -87,7 +87,17 @@ class DesktopChannel(Channel):
         # Forward structured agent events as SSE "thought" events
         def event_hook(evt):
             evt_type = evt.get("type")
-            if evt_type == "narration":
+            if evt_type == "reasoning":
+                # LLM's internal reasoning (e.g. from thinking models)
+                content = evt.get("content", "")
+                if len(content) > 2000:
+                    content = content[:2000] + f"… ({len(content)} chars)"
+                self._push_event(user_id, "thought", {
+                    "type": "reasoning",
+                    "content": content,
+                    "round": evt.get("round"),
+                })
+            elif evt_type == "narration":
                 self._push_event(user_id, "thought", {
                     "type": "narration",
                     "content": evt.get("content", ""),

@@ -232,6 +232,8 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
             reasoning = getattr(msg, "reasoning_content", None)
             if reasoning:
                 print(f"\033[96m{reasoning}\033[0m\n")
+                if on_event:
+                    on_event({"type": "reasoning", "content": reasoning, "round": round_num})
 
             # Output text (if any)
             final_text = ""

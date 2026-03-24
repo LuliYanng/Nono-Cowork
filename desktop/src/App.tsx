@@ -16,15 +16,35 @@ import {
   PromptInputFooter,
   PromptInputSubmit,
 } from "@/components/ai-elements/prompt-input";
-import { ThinkingSteps, type ThoughtStep } from "@/components/ThinkingSteps";
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from "@/components/ai-elements/reasoning";
+import {
+  Tool,
+  ToolHeader,
+  ToolContent,
+  ToolInput,
+  ToolOutput,
+} from "@/components/ai-elements/tool";
 
 // ── Types ──
+
+interface ThoughtEvent {
+  type: "reasoning" | "narration" | "tool_call" | "tool_result";
+  round: number;
+  content?: string;
+  toolName?: string;
+  args?: Record<string, unknown>;
+  result?: string;
+}
 
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  thoughtSteps?: ThoughtStep[];
+  thoughts?: ThoughtEvent[];
 }
 
 interface SessionStatus {
@@ -39,6 +59,103 @@ interface SessionStatus {
 // ── Config ──
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080";
+
+// ── Thoughts Renderer ──
+// Renders a list of ThoughtEvents using Reasoning + Tool components
+// - reasoning → Reasoning component (collapsible internal thinking)
+// - narration → Inline text (visible LLM text alongside tool calls)
+// - tool_call + tool_result → Tool component
+
+function ThoughtsRenderer({
+  thoughts,
+  isActive,
+}: {
+  thoughts: ThoughtEvent[];
+  isActive: boolean;
+}) {
+  const items: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < thoughts.length) {
+    const evt = thoughts[i];
+
+    // Internal reasoning from thinking models → Reasoning component
+    if (evt.type === "reasoning") {
+      // Merge consecutive reasoning events
+      let text = evt.content || "";
+      let j = i + 1;
+      while (j < thoughts.length && thoughts[j].type === "reasoning") {
+        text += "\n\n" + (thoughts[j].content || "");
+        j++;
+      }
+      const isLastChunk = j >= thoughts.length;
+      const isThisStreaming = isActive && isLastChunk;
+
+      items.push(
+        <Reasoning key={`r-${i}`} isStreaming={isThisStreaming} className="w-full">
+          <ReasoningTrigger />
+          <ReasoningContent>{text}</ReasoningContent>
+        </Reasoning>
+      );
+      i = j;
+      continue;
+    }
+
+    // Narration: LLM's visible text alongside tool calls → inline text
+    if (evt.type === "narration") {
+      items.push(
+        <p key={`n-${i}`} className="text-sm text-muted-foreground my-1">
+          {evt.content}
+        </p>
+      );
+      i++;
+      continue;
+    }
+
+    // Tool call + result → Tool component
+    if (evt.type === "tool_call") {
+      const nextEvt = i + 1 < thoughts.length ? thoughts[i + 1] : null;
+      const hasResult =
+        nextEvt?.type === "tool_result" &&
+        nextEvt.toolName === evt.toolName;
+
+      let toolState: "input-available" | "output-available" | "input-streaming";
+      if (hasResult) {
+        toolState = "output-available";
+      } else if (isActive) {
+        toolState = "input-available"; // Running
+      } else {
+        toolState = "input-streaming"; // Pending
+      }
+
+      items.push(
+        <Tool key={`t-${i}`} defaultOpen={toolState === "output-available"}>
+          <ToolHeader
+            title={evt.toolName || "tool"}
+            type={`tool-${evt.toolName || "unknown"}` as `tool-${string}`}
+            state={toolState}
+          />
+          <ToolContent>
+            {evt.args && Object.keys(evt.args).length > 0 && (
+              <ToolInput input={evt.args} />
+            )}
+            {hasResult && nextEvt && (
+              <ToolOutput output={nextEvt.result} errorText={undefined} />
+            )}
+          </ToolContent>
+        </Tool>
+      );
+
+      i = hasResult ? i + 2 : i + 1;
+      continue;
+    }
+
+    // Skip standalone tool_result
+    i++;
+  }
+
+  return <>{items}</>;
+}
 
 // ── App ──
 
@@ -101,7 +218,7 @@ function App() {
 
     // Prepare assistant message placeholder
     const assistantId = nextId();
-    const currentThoughtSteps: ThoughtStep[] = [];
+    const currentThoughts: ThoughtEvent[] = [];
     let assistantContent = "";
 
     try {
@@ -146,8 +263,8 @@ function App() {
               if (eventType === "status") {
                 setStatusText(data.text);
               } else if (eventType === "thought") {
-                // Collect structured thought steps
-                const step: ThoughtStep = {
+                // Collect structured thought events
+                const evt: ThoughtEvent = {
                   type: data.type,
                   round: data.round,
                   content: data.content,
@@ -155,15 +272,15 @@ function App() {
                   args: data.args,
                   result: data.result,
                 };
-                currentThoughtSteps.push(step);
+                currentThoughts.push(evt);
                 setThinkingMsgId(assistantId);
-                // Update the thought steps in messages state
+                // Update the thoughts in messages state
                 setMessages((prev) => {
                   const existing = prev.find((m) => m.id === assistantId);
                   if (existing) {
                     return prev.map((m) =>
                       m.id === assistantId
-                        ? { ...m, thoughtSteps: [...currentThoughtSteps] }
+                        ? { ...m, thoughts: [...currentThoughts] }
                         : m
                     );
                   } else {
@@ -173,7 +290,7 @@ function App() {
                         id: assistantId,
                         role: "assistant" as const,
                         content: "",
-                        thoughtSteps: [...currentThoughtSteps],
+                        thoughts: [...currentThoughts],
                       },
                     ];
                   }
@@ -196,7 +313,7 @@ function App() {
                         id: assistantId,
                         role: "assistant" as const,
                         content: assistantContent,
-                        thoughtSteps: [...currentThoughtSteps],
+                        thoughts: [...currentThoughts],
                       },
                     ];
                   }
@@ -332,9 +449,9 @@ function App() {
                 <MessageContent>
                   {msg.role === "assistant" ? (
                     <>
-                      {msg.thoughtSteps && msg.thoughtSteps.length > 0 && (
-                        <ThinkingSteps
-                          steps={msg.thoughtSteps}
+                      {msg.thoughts && msg.thoughts.length > 0 && (
+                        <ThoughtsRenderer
+                          thoughts={msg.thoughts}
                           isActive={msg.id === thinkingMsgId}
                         />
                       )}
@@ -353,7 +470,7 @@ function App() {
                 </MessageContent>
               </Message>
             ))}
-            {isStreaming && !animatingMsgId && statusText && (
+            {isStreaming && !animatingMsgId && !thinkingMsgId && statusText && (
               <div className="text-sm text-muted-foreground animate-pulse px-1">
                 {statusText}
               </div>
