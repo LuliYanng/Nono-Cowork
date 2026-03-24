@@ -142,7 +142,7 @@ class DesktopChannel(Channel):
                 return
 
         # Run agent (blocking in this thread)
-        self.send_status(user_id, "💭 Thinking...")
+        self.send_status(user_id, "Thinking...")
         run_agent_for_message(
             user_id, user_text_stripped,
             reply_func, status_func,
@@ -229,11 +229,19 @@ async def chat(request: Request):
 
     # Stream SSE events
     async def event_generator():
+        import asyncio
+        loop = asyncio.get_event_loop()
+
         while True:
             try:
-                event = q.get(timeout=0.3)
+                # IMPORTANT: q.get() is blocking — must run in executor
+                # to avoid blocking the asyncio event loop (which causes
+                # SSE connection drops and "stuck on thinking" in the UI).
+                event = await loop.run_in_executor(
+                    None, lambda: q.get(timeout=0.5)
+                )
             except queue.Empty:
-                # Send a heartbeat comment to keep the connection alive
+                # No event yet — send heartbeat to keep SSE alive
                 yield {"comment": "heartbeat"}
                 continue
 
