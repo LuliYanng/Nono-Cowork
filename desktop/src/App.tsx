@@ -56,6 +56,16 @@ interface SessionStatus {
 // ── Config ──
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080";
+const API_TOKEN = import.meta.env.VITE_API_TOKEN || "";
+
+// Helper: build headers with optional Bearer token
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  if (API_TOKEN) {
+    headers["Authorization"] = `Bearer ${API_TOKEN}`;
+  }
+  return headers;
+}
 
 // ── Parts Renderer ──
 // Renders MessagePart[] in order: text blocks + tool calls interleaved
@@ -148,7 +158,7 @@ function App() {
 
   // Health check on mount
   useEffect(() => {
-    fetch(`${API_BASE}/api/health`)
+    fetch(`${API_BASE}/api/health`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((data) => {
         setConnected(true);
@@ -166,7 +176,7 @@ function App() {
   // Fetch session status
   const refreshStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/status`);
+      const res = await fetch(`${API_BASE}/api/status`, { headers: authHeaders() });
       const data = await res.json();
       setSessionStatus(data);
     } catch {
@@ -217,7 +227,7 @@ function App() {
     try {
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ message: text }),
       });
 
@@ -320,7 +330,7 @@ function App() {
       try {
         const res = await fetch(`${API_BASE}/api/command/${cmd}`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({}),
         });
         const data = await res.json();

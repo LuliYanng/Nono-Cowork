@@ -21,6 +21,7 @@ load_dotenv()
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from channels.base import Channel, SLASH_COMMANDS
@@ -33,6 +34,7 @@ logger = logging.getLogger("channel.desktop")
 # Desktop channel uses a fixed user_id (single-user desktop app)
 DESKTOP_USER_ID = "desktop_user"
 DESKTOP_PORT = int(os.getenv("DESKTOP_PORT", "8080"))
+DESKTOP_API_TOKEN = os.getenv("DESKTOP_API_TOKEN", "")
 
 
 class DesktopChannel(Channel):
@@ -152,10 +154,42 @@ class DesktopChannel(Channel):
         self._push_event(user_id, "done", {})
 
 
+# ── Token Authentication ──
+
+class TokenAuthMiddleware(BaseHTTPMiddleware):
+    """Bearer token authentication for all API endpoints except /api/health."""
+
+    # Paths that don't require authentication
+    PUBLIC_PATHS = {"/api/health", "/docs", "/openapi.json"}
+
+    async def dispatch(self, request: Request, call_next):
+        # Skip auth for public paths
+        if request.url.path in self.PUBLIC_PATHS:
+            return await call_next(request)
+
+        # Skip auth if no token is configured (dev mode)
+        if not DESKTOP_API_TOKEN:
+            return await call_next(request)
+
+        # Validate Bearer token
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse({"error": "Missing Authorization header"}, status_code=401)
+
+        token = auth_header[7:]  # Strip "Bearer "
+        if token != DESKTOP_API_TOKEN:
+            return JSONResponse({"error": "Invalid token"}, status_code=403)
+
+        return await call_next(request)
+
+
 # ── FastAPI app ──
 
 channel = DesktopChannel()
 app = FastAPI(title="Desktop Agent API")
+
+# Auth middleware (must be added before CORS)
+app.add_middleware(TokenAuthMiddleware)
 
 # CORS: allow Electron dev server (localhost:5173) and production
 app.add_middleware(
@@ -169,8 +203,8 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def health():
-    """Health check."""
-    return {"status": "ok", "model": MODEL}
+    """Health check (public, no auth required)."""
+    return {"status": "ok", "model": MODEL, "auth_required": bool(DESKTOP_API_TOKEN)}
 
 
 @app.get("/api/status")
