@@ -92,6 +92,9 @@ def run_agent_for_message(user_id: str, user_text: str,
             session["history"] = updated_history
             session["token_stats"] = updated_stats
 
+            # Persist session to disk after each interaction
+            sessions.save_session(user_id)
+
             # Check if we were stopped
             was_stopped = sessions.is_stopped(user_id)
 

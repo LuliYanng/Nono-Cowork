@@ -70,6 +70,7 @@ def _cmd_status(channel, user_id: str, args: str):
     lines = [
         "📊 **Session Status**",
         "",
+        f"📎 Session: `{info.get('session_id', 'unknown')}`",
         f"🤖 Model: `{model}`",
         f"⏱️ Duration: {mins}m",
         f"💬 Messages: {info['history_len']}",
@@ -161,14 +162,67 @@ def _cmd_model(channel, user_id: str, args: str):
     channel.send_status(user_id, f"🤖 Model switched to: `{args}`")
 
 
+def _cmd_new(channel, user_id: str, args: str):
+    """Start a new session (archives the current one)."""
+    sessions.reset(user_id)
+    channel.send_status(user_id, "✨ New session started. Previous session saved.")
+
+
+def _cmd_sessions(channel, user_id: str, args: str):
+    """List saved sessions for this user."""
+    saved = sessions.list_sessions(user_id)
+    if not saved:
+        channel.send_status(user_id, "📭 No saved sessions.")
+        return
+
+    # Mark which one is active
+    active_id = None
+    status = sessions.get_status(user_id)
+    if status:
+        active_id = status.get("session_id")
+
+    lines = ["📋 **Saved Sessions**", ""]
+    for s in saved[:20]:  # Show up to 20
+        ts = time.strftime("%m-%d %H:%M", time.localtime(s["created_at"]))
+        marker = " 👈 current" if s["id"] == active_id else ""
+        preview = f" — {s['preview']}" if s.get("preview") else ""
+        lines.append(f"• `{s['id']}` ({ts}, {s['message_count']} msgs){preview}{marker}")
+
+    lines.append(f"\nSwitch: `/switch <session_id>`")
+    channel.send_status(user_id, "\n".join(lines))
+
+
+def _cmd_switch(channel, user_id: str, args: str):
+    """Switch to a different saved session."""
+    session_id = args.strip()
+    if not session_id:
+        channel.send_status(user_id, "Usage: `/switch <session_id>`\nUse `/sessions` to see available sessions.")
+        return
+
+    lock = sessions.get_lock(user_id)
+    if not lock.acquire(blocking=False):
+        channel.send_status(user_id, "⏳ Agent is running. Wait for it to finish before switching.")
+        return
+    try:
+        if sessions.switch_session(user_id, session_id):
+            channel.send_status(user_id, f"🔄 Switched to session `{session_id}`.")
+        else:
+            channel.send_status(user_id, f"❌ Session `{session_id}` not found.")
+    finally:
+        lock.release()
+
+
 # ── Command table: name → (handler_func, description) ──
 SLASH_COMMANDS = {
-    "help":    (_cmd_help,    "Show this help message"),
-    "reset":   (_cmd_reset,   "Reset session (clear context)"),
-    "status":  (_cmd_status,  "View session status & token usage"),
-    "stop":    (_cmd_stop,    "Stop the current running task"),
-    "compact": (_cmd_compact, "Compress context to free up space"),
-    "model":   (_cmd_model,   "View or switch the LLM model"),
+    "help":     (_cmd_help,     "Show this help message"),
+    "reset":    (_cmd_reset,    "Reset session (clear context)"),
+    "new":      (_cmd_new,      "Start a new session (saves current)"),
+    "sessions": (_cmd_sessions, "List saved sessions"),
+    "switch":   (_cmd_switch,   "Switch to a saved session"),
+    "status":   (_cmd_status,   "View session status & token usage"),
+    "stop":     (_cmd_stop,     "Stop the current running task"),
+    "compact":  (_cmd_compact,  "Compress context to free up space"),
+    "model":    (_cmd_model,    "View or switch the LLM model"),
 }
 
 
