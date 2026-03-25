@@ -6,7 +6,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
-    "electron:dev": "concurrently \"vite\" \"sleep 2 && electron .\"",
+    "electron:dev": "concurrently \"vite\" \"npx wait-on http://localhost:5173 && npx electron .\"",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
