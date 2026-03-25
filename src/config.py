@@ -63,3 +63,22 @@ SERVER_HOST = os.getenv("SERVER_HOST", "").strip()  # Public hostname/IP for web
 AGENT_WORK_DIR = os.path.expanduser(
     os.getenv("AGENT_WORK_DIR", "~/.cache/hands-on-agent")
 )
+
+# ── Tool Redirects ──
+# When the LLM tries to call a tool that's been filtered or doesn't exist,
+# return a helpful guidance message instead of a generic "unknown tool" error.
+# This is especially useful when third-party tool responses (e.g. Composio)
+# reference tools we've intentionally removed.
+# Format: { "TOOL_NAME": "guidance message for the LLM" }
+TOOL_REDIRECTS = {
+    "COMPOSIO_REMOTE_WORKBENCH": (
+        "This tool is not available. You are running on a dedicated server with full shell access. "
+        "Use run_command to execute any bash/python commands directly. "
+        "For file downloads: run_command with curl -o /path/file 'url'. "
+        "For data processing: run_command with python3 scripts."
+    ),
+    "COMPOSIO_REMOTE_BASH_TOOL": (
+        "This tool is not available. You have direct server access. "
+        "Use run_command to execute bash commands locally instead."
+    ),
+}

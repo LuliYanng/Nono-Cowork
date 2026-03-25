@@ -6,7 +6,7 @@ import re
 import json
 from tools import tools_map, tools_schema
 from tools import composio_tools
-from config import MODEL, MAX_ROUNDS, CONTEXT_LIMIT
+from config import MODEL, MAX_ROUNDS, CONTEXT_LIMIT, TOOL_REDIRECTS
 from prompt import make_system_prompt
 from llm import call_llm, call_llm_stream, extract_cache_info, update_token_stats, make_empty_token_stats
 from logger import create_log_file, close_log_file, log_event, recover_orphaned_logs, serialize_message, serialize_usage
@@ -389,6 +389,9 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
                 elif composio_tools.is_composio_tool(tool_name):
                     # Composio meta-tool: execute via Composio SDK (with result cleaning)
                     tool_result = composio_tools.execute(tool_name, args)
+                elif tool_name in TOOL_REDIRECTS:
+                    # Tool was intentionally filtered — return guidance instead of error
+                    tool_result = TOOL_REDIRECTS[tool_name]
                 else:
                     tool_result = f"Error: unknown tool {tool_name}"
 

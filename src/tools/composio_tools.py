@@ -48,6 +48,29 @@ def init():
         _composio_client = Composio(provider=OpenAIProvider())
         _composio_session = _composio_client.create(user_id=COMPOSIO_USER_ID)
         _composio_tools_schema = _composio_session.tools()
+
+        # Filter out sandbox tools — our agent runs on its own server with
+        # full shell access (run_command), so Composio's remote sandbox is
+        # redundant and actively misleads the LLM into using an isolated
+        # environment instead of the local server.
+        # REMOTE_WORKBENCH alone is ~10k chars (40% of all Composio schemas),
+        # which dominates LLM attention and causes repeated wrong decisions.
+        _EXCLUDED_TOOLS = {
+            "COMPOSIO_REMOTE_WORKBENCH",
+            "COMPOSIO_REMOTE_BASH_TOOL",
+        }
+        before = len(_composio_tools_schema)
+        _composio_tools_schema = [
+            t for t in _composio_tools_schema
+            if t.get("function", {}).get("name") not in _EXCLUDED_TOOLS
+        ]
+        excluded = before - len(_composio_tools_schema)
+        if excluded:
+            logger.info(
+                "Filtered %d sandbox tools: %s",
+                excluded, ", ".join(_EXCLUDED_TOOLS),
+            )
+
         logger.info(
             "Composio initialized: %d meta tools loaded for user '%s'",
             len(_composio_tools_schema), COMPOSIO_USER_ID,
