@@ -18,8 +18,9 @@ logger = logging.getLogger("session")
 
 
 def _generate_session_id() -> str:
-    """Generate a timestamp-based session ID."""
-    return time.strftime("%Y%m%d_%H%M%S")
+    """Generate a timestamp-based session ID with random suffix."""
+    import secrets
+    return time.strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(2)
 
 
 def _session_path(session_id: str) -> str:
@@ -250,6 +251,8 @@ class SessionManager:
         """Archive current session and start a new one.
 
         The old session file stays on disk for history.
+        A new empty session is created immediately so that
+        get_or_create doesn't reload the archived session.
         """
         with self._global_lock:
             if user_id in self._sessions:
@@ -269,12 +272,15 @@ class SessionManager:
                         "session_token_stats": old_session.get("token_stats"),
                     })
                     close_log_file(log_file)
-                # Save to disk one last time before archiving
-                # (re-add temporarily for save_session)
+                # Save old session to disk before archiving
                 self._sessions[user_id] = old_session
         self.save_session(user_id)
+        # Create a new empty session so the next get_or_create
+        # doesn't reload the just-archived one from disk
         with self._global_lock:
-            self._sessions.pop(user_id, None)
+            self._sessions[user_id] = self._create_new_session(user_id)
+        # Persist the new session immediately (crash safety)
+        self.save_session(user_id)
 
     def request_stop(self, user_id: str) -> bool:
         """Signal the running agent to stop. Returns True if a session exists."""
