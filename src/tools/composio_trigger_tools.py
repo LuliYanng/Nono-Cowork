@@ -122,3 +122,39 @@ def composio_delete_trigger(trigger_id: str) -> str:
         return '{"error": "Composio is not enabled. Set COMPOSIO_API_KEY in .env."}'
     from composio_triggers import delete_trigger
     return delete_trigger(trigger_id)
+
+
+@tool(
+    name="composio_wait_for_connection",
+    description=(
+        "Wait for a user to complete authentication for a toolkit/app. "
+        "Call this IMMEDIATELY after COMPOSIO_MANAGE_CONNECTIONS returns an 'initiated' "
+        "status with a redirect URL. This tool BLOCKS until the user completes auth "
+        "or times out (default 300s). "
+        "Example flow: "
+        "1) Call COMPOSIO_MANAGE_CONNECTIONS → get auth link → share with user. "
+        "2) Call composio_wait_for_connection(toolkit='discord') → blocks until user completes auth. "
+        "3) Tool returns success → continue with the original task."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "toolkit": {
+                "type": "string",
+                "description": "The toolkit/app slug to wait for (e.g., 'gmail', 'discord', 'github').",
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "Max seconds to wait for auth completion. Default: 300.",
+            },
+        },
+        "required": ["toolkit"],
+    },
+)
+def composio_wait_for_connection(toolkit: str, timeout: int = None) -> str:
+    if not _is_enabled():
+        return '{"error": "Composio is not enabled. Set COMPOSIO_API_KEY in .env."}'
+    import json
+    from tools.composio_tools import wait_for_connection
+    result = wait_for_connection(toolkit, timeout)
+    return json.dumps(result, ensure_ascii=False)

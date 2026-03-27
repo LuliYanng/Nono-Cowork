@@ -11,7 +11,6 @@ Composio is only initialized when COMPOSIO_API_KEY is set in the environment.
 
 import json
 import logging
-import threading
 from composio import Composio
 from composio_openai import OpenAIProvider
 
@@ -91,220 +90,152 @@ def is_composio_tool(tool_name: str) -> bool:
     """Check if a tool name is a Composio meta-tool."""
     return tool_name.startswith("COMPOSIO_")
 
-def _find_initiated_connection_id(toolkit: str) -> str | None:
-    """Find the most recently initiated/initializing connection ID for a toolkit.
 
-    The MANAGE_CONNECTIONS response returns status "initiated" (lowercase), but
-    the actual API status is "INITIALIZING" (not "INITIATED"). We search for
-    both to be safe, and also fall back to a broader search without toolkit
-    filter since the toolkit_slugs parameter may not match.
+def _find_connection_for_toolkit(toolkit: str) -> str | None:
+    """Find the most recent pending connection for a toolkit.
+
+    Checks both INITIALIZING and INITIATED statuses because
+    Composio API uses them interchangeably in different contexts.
     """
-    # Status values to search: MANAGE_CONNECTIONS says "initiated",
-    # but the real API uses "INITIALIZING" and "INITIATED"
-    search_statuses = ["INITIALIZING", "INITIATED"]
-
     try:
-        # Try with toolkit filter first
         conns = _composio_client.connected_accounts.list(
             user_ids=[COMPOSIO_USER_ID],
             toolkit_slugs=[toolkit],
-            statuses=search_statuses,
+            statuses=["INITIALIZING", "INITIATED"],
             order_by="created_at",
             order_direction="desc",
             limit=1,
         )
         if conns.items:
-            logger.info("Found connection_id %s for %s (with toolkit filter)",
-                        conns.items[0].id, toolkit)
             return conns.items[0].id
-
-        # Fallback: search without toolkit filter, then match manually
-        # (toolkit_slugs filter might not work with all API versions)
-        conns = _composio_client.connected_accounts.list(
-            user_ids=[COMPOSIO_USER_ID],
-            statuses=search_statuses,
-            order_by="created_at",
-            order_direction="desc",
-            limit=10,
-        )
-        for c in conns.items:
-            # Check toolkit.slug in the nested structure
-            tk = getattr(c, "toolkit", None)
-            tk_slug = tk.get("slug", "") if isinstance(tk, dict) else getattr(tk, "slug", "")
-            if tk_slug == toolkit:
-                logger.info("Found connection_id %s for %s (fallback match)",
-                            c.id, toolkit)
-                return c.id
-
     except Exception as e:
-        logger.warning("Failed to find connection_id for %s: %s", toolkit, e)
+        logger.warning("Failed to find connection for toolkit %s: %s", toolkit, e)
     return None
 
 
-# ── Background auth completion watchers ──
-_auth_watchers: dict[str, threading.Thread] = {}
+def wait_for_connection(toolkit: str, timeout: int = None) -> dict:
+    """Block until a toolkit's connection becomes ACTIVE or FAILED.
 
+    Called by the agent as a local tool. Blocks the agent loop, keeping
+    the SSE stream alive so the frontend sees the result naturally.
 
-def _start_auth_watcher(toolkit: str, conn_id: str):
-    """Start a background thread that polls for auth completion.
+    Note: We don't use SDK's wait_for_connection() because it only checks
+    for ACTIVE status — if auth fails (FAILED), it keeps polling until
+    timeout instead of returning immediately.
 
-    Instead of waiting on a specific connection_id (which breaks when the user
-    re-initiates auth and gets a new connection_id), we poll to check if the
-    toolkit has ANY active connection for this user.
+    Note 2: Composio doesn't always set FAILED status on auth failure —
+    the connection may stay INITIALIZING. So we also check the user's
+    /stop signal to allow early exit.
     """
-    if toolkit in _auth_watchers and _auth_watchers[toolkit].is_alive():
-        logger.info("Auth watcher for %s already running, skipping", toolkit)
-        return
+    import time
 
-    # Capture execution context NOW (from the current thread)
-    # because the watcher thread won't have it.
+    if not _composio_client:
+        return {"error": "Composio not initialized", "successful": False}
+
+    if timeout is None:
+        timeout = AUTH_WAIT_TIMEOUT
+
+    # Find the INITIALIZING connection for this toolkit
+    conn_id = _find_connection_for_toolkit(toolkit)
+    if not conn_id:
+        return {
+            "error": f"No pending connection found for '{toolkit}'. "
+                     "Call COMPOSIO_MANAGE_CONNECTIONS first to initiate auth.",
+            "successful": False,
+        }
+
+    # Get stop checker from session (for /stop command support)
+    _is_stopped = None
     try:
         from context import get_context
         ctx = get_context()
-        captured_user_id = ctx.get("user_id")
-        captured_channel = ctx.get("channel_name")
+        user_id = ctx.get("user_id")
+        if user_id:
+            from session import sessions
+            _is_stopped = lambda: sessions.is_stopped(user_id)
     except Exception:
-        captured_user_id = None
-        captured_channel = None
+        pass
 
-    def _watch():
-        import time
-        logger.info(
-            "Auth watcher started for %s (timeout=%ds)",
-            toolkit, AUTH_WAIT_TIMEOUT,
-        )
-        deadline = time.time() + AUTH_WAIT_TIMEOUT
-        poll_interval = 1  # seconds
+    logger.info("Waiting for %s connection %s (timeout=%ds)", toolkit, conn_id, timeout)
 
-        while time.time() < deadline:
-            try:
-                # Try with toolkit filter first
-                conns = _composio_client.connected_accounts.list(
-                    user_ids=[COMPOSIO_USER_ID],
-                    toolkit_slugs=[toolkit],
-                    statuses=["ACTIVE"],
-                    order_by="created_at",
-                    order_direction="desc",
-                    limit=1,
-                )
-                if conns.items:
-                    logger.info("%s auth completed successfully!", toolkit)
-                    _notify_auth_completed(toolkit, success=True,
-                                           user_id=captured_user_id)
-                    return
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        # Check if user sent /stop
+        if _is_stopped and _is_stopped():
+            logger.info("Wait for %s interrupted by user stop", toolkit)
+            return {
+                "successful": False,
+                "toolkit": toolkit,
+                "status": "stopped",
+                "error": "Stopped by user.",
+            }
 
-                # Fallback: search without toolkit filter, match manually
-                conns = _composio_client.connected_accounts.list(
-                    user_ids=[COMPOSIO_USER_ID],
-                    statuses=["ACTIVE"],
-                    order_by="created_at",
-                    order_direction="desc",
-                    limit=10,
-                )
-                for c in conns.items:
-                    tk = getattr(c, "toolkit", None)
-                    tk_slug = tk.get("slug", "") if isinstance(tk, dict) else getattr(tk, "slug", "")
-                    if tk_slug == toolkit:
-                        logger.info("%s auth completed (fallback match)!", toolkit)
-                        _notify_auth_completed(toolkit, success=True,
-                                               user_id=captured_user_id)
-                        return
-            except Exception as e:
-                logger.debug("Auth watcher poll error for %s: %s", toolkit, e)
-
-            time.sleep(poll_interval)
-
-        # Timeout
-        logger.warning("Auth watcher for %s timed out after %ds", toolkit, AUTH_WAIT_TIMEOUT)
-        _notify_auth_completed(toolkit, success=False, status="timeout",
-                               user_id=captured_user_id)
-
-    def _watch_cleanup():
-        _watch()
-        _auth_watchers.pop(toolkit, None)
-
-    t = threading.Thread(target=_watch_cleanup, name=f"auth-watcher-{toolkit}", daemon=True)
-    _auth_watchers[toolkit] = t
-    t.start()
-
-
-def _notify_auth_completed(toolkit: str, success: bool, status: str = "ACTIVE",
-                           user_id: str = None):
-    """Auto-continue the agent loop after auth completion.
-
-    For IM channels: injects a synthetic user message ("connected to xxx")
-    and triggers a new agent_loop iteration, so the agent can continue the
-    original task without the user having to manually type anything.
-
-    For CLI: prints a notification (can't inject into blocking input()).
-    """
-    if success:
-        message = f"I've connected to {toolkit} successfully. Please continue with the original task."
-    else:
-        message = (
-            f"{toolkit} authorization was not completed (status: {status}). "
-            "Please try again if needed."
-        )
-
-    if user_id:
-        # IM channel mode: auto-trigger agent loop with the synthetic message
         try:
-            from channels.registry import list_channels, get_channel
-            from agent_runner import run_agent_for_message
-            channel_names = list_channels()
-            if channel_names:
-                channel = get_channel(channel_names[0])
-                if channel:
-                    def reply_func(text):
-                        channel.send_reply(user_id, text)
-                    def status_func(text):
-                        channel.send_status(user_id, text)
-                    logger.info("Auto-triggering agent loop for %s auth completion", toolkit)
-                    t = threading.Thread(
-                        target=run_agent_for_message,
-                        args=(user_id, message, reply_func, status_func, f"{channel.name}:auth"),
-                        daemon=True,
-                    )
-                    t.start()
-                    return
+            conn = _composio_client.connected_accounts.get(nanoid=conn_id)
+            status = conn.status
+
+            if status == "ACTIVE":
+                logger.info("%s connection %s is now ACTIVE!", toolkit, conn_id)
+                return {
+                    "successful": True,
+                    "toolkit": toolkit,
+                    "status": "ACTIVE",
+                    "message": f"{toolkit} is now connected and ready to use.",
+                }
+
+            if status == "FAILED" or status == "EXPIRED":
+                reason = getattr(conn, "status_reason", None) or "unknown"
+                logger.warning("%s connection %s %s: %s", toolkit, conn_id, status, reason)
+                return {
+                    "successful": False,
+                    "toolkit": toolkit,
+                    "status": status,
+                    "error": f"Authentication {status.lower()} for {toolkit}: {reason}. "
+                             "Please initiate a new connection to retry.",
+                }
         except Exception as e:
-            logger.warning("Failed to auto-trigger agent loop: %s", e)
+            logger.debug("Poll error for %s: %s", toolkit, e)
 
-    # CLI / fallback: print notification (can't inject into input())
-    print(f"\n✅ Connected to {toolkit}! You can continue with your request.")
-    logger.info("Auth notification (stdout): %s", message)
+        time.sleep(1)
+
+    logger.warning("wait_for_connection timed out for %s after %ds", toolkit, timeout)
+    return {
+        "successful": False,
+        "toolkit": toolkit,
+        "status": "timeout",
+        "error": f"Connection did not complete within {timeout}s. "
+                 "The user may not have completed the auth flow.",
+    }
 
 
-def _maybe_start_auth_watchers(raw_result: dict):
-    """Check MANAGE_CONNECTIONS result for pending connections and start background watchers."""
+def _inject_wait_guidance(raw_result: dict):
+    """Inject guidance into MANAGE_CONNECTIONS result to call composio_wait_for_connection.
+
+    Composio's built-in instruction references 'COMPOSIO_WAIT_FOR_CONNECTIONS' which
+    doesn't exist in our tool set. We replace it with our local tool name and add
+    a strong directive so the LLM calls it automatically.
+    """
     data = raw_result.get("data", {})
     results = data.get("results", {})
-    if not results:
-        return
+    initiated_toolkits = []
 
     for toolkit, info in results.items():
-        status = info.get("status")
-        if status != "initiated":
-            continue
-
-        # Find the connection_id
-        conn_id = (
-            info.get("connection_id")
-            or info.get("connectedAccountId")
-            or _find_initiated_connection_id(toolkit)
-        )
-
-        if not conn_id:
-            logger.warning(
-                "Cannot find connection_id for %s — "
-                "user will need to confirm manually",
-                toolkit,
+        if info.get("status") == "initiated":
+            initiated_toolkits.append(toolkit)
+            # Replace Composio's instruction with ours
+            info["instruction"] = (
+                f"IMPORTANT: Share the auth link with the user, then IMMEDIATELY call "
+                f"composio_wait_for_connection(toolkit='{toolkit}') to wait for "
+                f"the user to complete authentication. Do NOT ask the user to confirm — "
+                f"the tool will automatically detect when auth is complete."
             )
-            continue
 
-        # Start background watcher (non-blocking)
-        _start_auth_watcher(toolkit, conn_id)
-
+    if initiated_toolkits:
+        data["_agent_directive"] = (
+            f"MUST DO: After sharing auth link(s), call composio_wait_for_connection "
+            f"for each initiated toolkit: {initiated_toolkits}. "
+            f"This blocks until the user completes auth — do NOT wait for user confirmation."
+        )
 
 
 def execute(tool_name: str, arguments: dict) -> str:
@@ -336,9 +267,9 @@ def execute(tool_name: str, arguments: dict) -> str:
             future = pool.submit(_do_execute)
             raw_result = future.result(timeout=COMPOSIO_EXECUTE_TIMEOUT)
 
-        # Start background auth watchers for any initiated connections
+        # For MANAGE_CONNECTIONS: inject guidance to call our local wait tool
         if tool_name == "COMPOSIO_MANAGE_CONNECTIONS":
-            _maybe_start_auth_watchers(raw_result)
+            _inject_wait_guidance(raw_result)
 
         # Pass through full result — don't clean until we've validated
         # which fields are safe to strip without confusing the agent.
