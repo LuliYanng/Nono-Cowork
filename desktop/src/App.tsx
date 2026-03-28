@@ -608,134 +608,137 @@ function App() {
 
           {/* Chat area */}
           <Conversation className="flex-1">
-            <ConversationContent>
-              {/* Skeleton loading for session switch */}
-              {loadingSession && (
-                <div className="flex flex-col gap-5 py-4 animate-pulse">
-                  {/* User message skeleton */}
-                  <div className="flex justify-end">
-                    <div className="rounded-lg bg-secondary/60 h-10 w-[45%]"></div>
+            <ConversationContent className="w-[85%] max-w-5xl mx-auto pb-6">
+                {/* Skeleton loading for session switch */}
+                {loadingSession && (
+                  <div className="flex flex-col gap-5 py-4 animate-pulse">
+                    {/* User message skeleton */}
+                    <div className="flex justify-end">
+                      <div className="rounded-lg bg-secondary/60 h-10 w-[45%]"></div>
+                    </div>
+                    {/* Assistant message skeleton */}
+                    <div className="flex flex-col gap-2.5 w-[75%]">
+                      <div className="rounded bg-muted/50 h-3.5 w-full"></div>
+                      <div className="rounded bg-muted/50 h-3.5 w-[92%]"></div>
+                      <div className="rounded bg-muted/50 h-3.5 w-[60%]"></div>
+                    </div>
+                    {/* User message skeleton */}
+                    <div className="flex justify-end">
+                      <div className="rounded-lg bg-secondary/60 h-8 w-[35%]"></div>
+                    </div>
+                    {/* Assistant message skeleton */}
+                    <div className="flex flex-col gap-2.5 w-[80%]">
+                      <div className="rounded bg-muted/50 h-3.5 w-full"></div>
+                      <div className="rounded bg-muted/50 h-3.5 w-[85%]"></div>
+                      <div className="rounded bg-muted/40 h-3.5 w-[70%]"></div>
+                      <div className="rounded bg-muted/30 h-3.5 w-[45%]"></div>
+                    </div>
                   </div>
-                  {/* Assistant message skeleton */}
-                  <div className="flex flex-col gap-2.5 w-[75%]">
-                    <div className="rounded bg-muted/50 h-3.5 w-full"></div>
-                    <div className="rounded bg-muted/50 h-3.5 w-[92%]"></div>
-                    <div className="rounded bg-muted/50 h-3.5 w-[60%]"></div>
+                )}
+                {messages.length === 0 && !isStreaming && !loadingSession && (
+                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
+                    <p className="text-lg">👋 Ready to chat</p>
+                    <p className="text-sm">
+                      Send a message to start a conversation
+                    </p>
                   </div>
-                  {/* User message skeleton */}
-                  <div className="flex justify-end">
-                    <div className="rounded-lg bg-secondary/60 h-8 w-[35%]"></div>
+                )}
+                {messages.map((msg) => (
+                  <Message key={msg.id} from={msg.role}>
+                    <MessageContent>
+                      {msg.role === "assistant" ? (
+                        <>
+                          {msg.reasoning && (
+                            <Reasoning
+                              isStreaming={msg.id === thinkingMsgId && !msg.content}
+                              className="w-full"
+                            >
+                              <ReasoningTrigger />
+                              <ReasoningContent>{msg.reasoning}</ReasoningContent>
+                            </Reasoning>
+                          )}
+                          {msg.parts && msg.parts.length > 0 && (
+                            <PartsRenderer
+                              parts={msg.parts}
+                              isActive={msg.id === thinkingMsgId}
+                              defaultCollapsed={msg.id.startsWith("hist-")}
+                            />
+                          )}
+                        </>
+                      ) : (
+                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                      )}
+                    </MessageContent>
+                  </Message>
+                ))}
+                {isStreaming && !animatingMsgId && !thinkingMsgId && statusText && (
+                  <div className="text-sm text-muted-foreground animate-pulse px-1">
+                    {statusText}
                   </div>
-                  {/* Assistant message skeleton */}
-                  <div className="flex flex-col gap-2.5 w-[80%]">
-                    <div className="rounded bg-muted/50 h-3.5 w-full"></div>
-                    <div className="rounded bg-muted/50 h-3.5 w-[85%]"></div>
-                    <div className="rounded bg-muted/40 h-3.5 w-[70%]"></div>
-                    <div className="rounded bg-muted/30 h-3.5 w-[45%]"></div>
-                  </div>
-                </div>
-              )}
-              {messages.length === 0 && !isStreaming && !loadingSession && (
-                <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
-                  <p className="text-lg">👋 Ready to chat</p>
-                  <p className="text-sm">
-                    Send a message to start a conversation
-                  </p>
-                </div>
-              )}
-              {messages.map((msg) => (
-                <Message key={msg.id} from={msg.role}>
-                  <MessageContent>
-                    {msg.role === "assistant" ? (
-                      <>
-                        {msg.reasoning && (
-                          <Reasoning
-                            isStreaming={msg.id === thinkingMsgId && !msg.content}
-                            className="w-full"
-                          >
-                            <ReasoningTrigger />
-                            <ReasoningContent>{msg.reasoning}</ReasoningContent>
-                          </Reasoning>
-                        )}
-                        {msg.parts && msg.parts.length > 0 && (
-                          <PartsRenderer
-                            parts={msg.parts}
-                            isActive={msg.id === thinkingMsgId}
-                            defaultCollapsed={msg.id.startsWith("hist-")}
-                          />
-                        )}
-                      </>
-                    ) : (
-                      <p className="whitespace-pre-wrap">{msg.content}</p>
-                    )}
-                  </MessageContent>
-                </Message>
-              ))}
-              {isStreaming && !animatingMsgId && !thinkingMsgId && statusText && (
-                <div className="text-sm text-muted-foreground animate-pulse px-1">
-                  {statusText}
-                </div>
-              )}
+                )}
             </ConversationContent>
             <ConversationScrollButton />
           </Conversation>
 
-          {/* Input area */}
-          <div className="p-3">
-            <PromptInput
-              onSubmit={handlePromptSubmit}
-            >
-              <PromptInputTextarea
-                placeholder="Type a message..."
-                value={input}
-                onChange={(e) => setInput(e.currentTarget.value)}
-              />
-              <PromptInputFooter>
-                {sessionStatus.active && (sessionStatus.prompt_tokens ?? 0) > 0 ? (
-                  <Context
-                    usedTokens={sessionStatus.prompt_tokens ?? 0}
-                    maxTokens={sessionStatus.context_limit ?? 200000}
-                    modelId={sessionStatus.model?.replace('/', ':') ?? ''}
-                    usage={{
-                      inputTokens: sessionStatus.total_prompt_tokens ?? 0,
-                      outputTokens: sessionStatus.total_completion_tokens ?? 0,
-                      totalTokens: sessionStatus.total_tokens ?? 0,
-                      cachedInputTokens: sessionStatus.total_cached_tokens ?? 0,
-                      inputTokenDetails: { cacheReadTokens: sessionStatus.total_cached_tokens ?? 0, noCacheTokens: undefined, cacheWriteTokens: undefined },
-                      outputTokenDetails: { textTokens: undefined, reasoningTokens: undefined },
-                    }}
-                  >
-                    <ContextTrigger className="h-6 px-1.5 text-[11px] text-muted-foreground/60" />
-                    <ContextContent side="top" align="start">
-                      <ContextContentHeader />
-                      <ContextContentBody className="space-y-1">
-                        <ContextInputUsage />
-                        <ContextOutputUsage />
-                        <ContextCacheUsage />
-                      </ContextContentBody>
-                    </ContextContent>
-                  </Context>
-                ) : (
-                  sessionStatus.model && (
-                    <span className="text-[11px] text-muted-foreground/50">
-                      {sessionStatus.model.split('/').pop()}
-                    </span>
-                  )
-                )}
-                <PromptInputSubmit
-                  className="cursor-pointer"
-                  disabled={!isStreaming && !input.trim()}
-                  status={isStreaming ? "streaming" : "ready"}
-                  onStop={() => {
-                    fetch(`${API_BASE}/api/command/stop`, {
-                      method: "POST",
-                      headers: authHeaders({ "Content-Type": "application/json" }),
-                      body: JSON.stringify({}),
-                    }).catch(() => {});
-                  }}
+          {/* Input area with gradient fade above */}
+          <div className="relative shrink-0 px-4 pb-4">
+            <div className="pointer-events-none absolute inset-x-0 -top-8 h-8 bg-gradient-to-t from-background to-transparent" />
+            <div className="w-[85%] max-w-5xl mx-auto">
+              <PromptInput
+                onSubmit={handlePromptSubmit}
+              >
+                <PromptInputTextarea
+                  placeholder="Type a message..."
+                  value={input}
+                  onChange={(e) => setInput(e.currentTarget.value)}
                 />
-              </PromptInputFooter>
-            </PromptInput>
+                <PromptInputFooter>
+                  {sessionStatus.active && (sessionStatus.prompt_tokens ?? 0) > 0 ? (
+                    <Context
+                      usedTokens={sessionStatus.prompt_tokens ?? 0}
+                      maxTokens={sessionStatus.context_limit ?? 200000}
+                      modelId={sessionStatus.model?.replace('/', ':') ?? ''}
+                      usage={{
+                        inputTokens: sessionStatus.total_prompt_tokens ?? 0,
+                        outputTokens: sessionStatus.total_completion_tokens ?? 0,
+                        totalTokens: sessionStatus.total_tokens ?? 0,
+                        cachedInputTokens: sessionStatus.total_cached_tokens ?? 0,
+                        inputTokenDetails: { cacheReadTokens: sessionStatus.total_cached_tokens ?? 0, noCacheTokens: undefined, cacheWriteTokens: undefined },
+                        outputTokenDetails: { textTokens: undefined, reasoningTokens: undefined },
+                      }}
+                    >
+                      <ContextTrigger className="h-6 px-1.5 text-[11px] text-muted-foreground/60" />
+                      <ContextContent side="top" align="start">
+                        <ContextContentHeader />
+                        <ContextContentBody className="space-y-1">
+                          <ContextInputUsage />
+                          <ContextOutputUsage />
+                          <ContextCacheUsage />
+                        </ContextContentBody>
+                      </ContextContent>
+                    </Context>
+                  ) : (
+                    sessionStatus.model && (
+                      <span className="text-[11px] text-muted-foreground/50">
+                        {sessionStatus.model.split('/').pop()}
+                      </span>
+                    )
+                  )}
+                  <PromptInputSubmit
+                    className="cursor-pointer"
+                    disabled={!isStreaming && !input.trim()}
+                    status={isStreaming ? "streaming" : "ready"}
+                    onStop={() => {
+                      fetch(`${API_BASE}/api/command/stop`, {
+                        method: "POST",
+                        headers: authHeaders({ "Content-Type": "application/json" }),
+                        body: JSON.stringify({}),
+                      }).catch(() => {});
+                    }}
+                  />
+                </PromptInputFooter>
+              </PromptInput>
+            </div>
           </div>
         </div>
       </div>
