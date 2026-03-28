@@ -1,0 +1,31 @@
+# Nono CoWork - Multi-Channel Agent systemd service
+#
+# Starts all enabled channels in a single process.
+# Configure CHANNELS in .env to control which channels are active.
+#
+# Setup:
+#   1. sudo cp nono-cowork.service /etc/systemd/system/
+#   2. sudo systemctl daemon-reload
+#   3. sudo systemctl enable --now nono-cowork
+#
+# Manage:
+#   sudo systemctl status nono-cowork        # check status
+#   sudo journalctl -u nono-cowork -f        # view logs
+#   sudo systemctl restart nono-cowork       # restart after code update
+
+[Unit]
+Description=Nono CoWork - Multi-Channel Agent (Desktop + Feishu + Telegram)
+After=network.target
+
+[Service]
+Type=simple
+User=google-server
+WorkingDirectory=/home/google-server/hands_on_agent/src
+ExecStart=/home/google-server/hands_on_agent/.venv/bin/python main.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/home/google-server
+
+[Install]
+WantedBy=multi-user.target

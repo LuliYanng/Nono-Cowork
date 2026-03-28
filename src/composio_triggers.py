@@ -298,8 +298,9 @@ def _handle_trigger_event(data):
                 logger.info("Trigger event skipped (slug=%s)", trigger_slug)
                 return
 
-            # Deliver result to user
-            _deliver_to_user(recipe_user_id, result)
+            # Deliver result to user (use recipe's preferred channel)
+            preferred_ch = (recipe or {}).get("channel_name")
+            _deliver_to_user(recipe_user_id, result, preferred_channel=preferred_ch)
 
         except Exception as e:
             logger.error("Error handling trigger event: %s", e, exc_info=True)
@@ -346,22 +347,38 @@ def _run_disposable_agent(agent_prompt: str, event_data, trigger_slug: str) -> s
     return result
 
 
-def _deliver_to_user(user_id: str, message: str):
-    """Send the processed trigger result directly to the user's IM channel."""
+def _deliver_to_user(user_id: str, message: str, preferred_channel: str = None):
+    """Send the processed trigger result directly to the user's IM channel.
+
+    Tries the preferred channel first (from trigger recipe), then falls back
+    to any available registered channel.
+    """
     try:
         from channels.registry import list_channels, get_channel
 
-        channel_names = list_channels()
-        if not channel_names:
-            logger.warning("No IM channels registered. Cannot deliver trigger result.")
-            return
+        channel = None
 
-        channel = get_channel(channel_names[0])
+        # Try preferred channel first
+        if preferred_channel:
+            channel = get_channel(preferred_channel)
+
+        # Fallback: try any available channel
+        if not channel:
+            for name in list_channels():
+                channel = get_channel(name)
+                if channel:
+                    if preferred_channel:
+                        logger.warning(
+                            "Preferred channel '%s' unavailable, falling back to '%s'",
+                            preferred_channel, name,
+                        )
+                    break
+
         if channel:
             channel.send_reply(user_id, message)
             logger.info("Trigger result delivered to %s via %s", user_id, channel.name)
         else:
-            logger.warning("Channel %s not found", channel_names[0])
+            logger.warning("No IM channels registered. Cannot deliver trigger result.")
     except Exception as e:
         logger.warning("Failed to deliver trigger result: %s", e)
 
@@ -433,6 +450,7 @@ def create_trigger(trigger_slug: str, agent_prompt: str = None,
             "agent_prompt": agent_prompt or _DEFAULT_TRIGGER_PROMPT,
             "trigger_config": trigger_config,
             "user_id": current_user_id,
+            "channel_name": ctx.get("channel_name", ""),
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
         _save_recipes(recipes)

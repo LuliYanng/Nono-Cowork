@@ -27,12 +27,12 @@ from sse_starlette.sse import EventSourceResponse
 from channels.base import Channel, SLASH_COMMANDS
 from channels.registry import register_channel
 from session import sessions, _serialize_history
-from config import MODEL, MODEL_POOL, CONTEXT_LIMIT
+from config import MODEL, MODEL_POOL, CONTEXT_LIMIT, OWNER_USER_ID
 
 logger = logging.getLogger("channel.desktop")
 
-# Desktop channel uses a fixed user_id (single-user desktop app)
-DESKTOP_USER_ID = "desktop_user"
+# Desktop channel uses the unified owner ID (shared with other channels)
+DESKTOP_USER_ID = OWNER_USER_ID
 DESKTOP_PORT = int(os.getenv("DESKTOP_PORT", "8080"))
 DESKTOP_API_TOKEN = os.getenv("DESKTOP_API_TOKEN", "")
 
@@ -204,7 +204,13 @@ app.add_middleware(
 @app.get("/api/health")
 async def health():
     """Health check (public, no auth required)."""
-    return {"status": "ok", "model": MODEL, "auth_required": bool(DESKTOP_API_TOKEN)}
+    from channels.registry import list_channels
+    return {
+        "status": "ok",
+        "model": MODEL,
+        "channels": list_channels(),
+        "auth_required": bool(DESKTOP_API_TOKEN),
+    }
 
 
 @app.get("/api/status")

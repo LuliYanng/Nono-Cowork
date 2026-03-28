@@ -46,6 +46,14 @@ MEMORY_MAX_INJECT_CHARS = 2000      # Max chars of memory to inject into system 
 # ── Session Persistence ──
 SESSIONS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "sessions")
 
+# ── Multi-Channel ──
+# Unified user identity — all authenticated channel users map to this ID.
+# This enables cross-channel session sharing (e.g., start on Desktop, continue on Telegram).
+OWNER_USER_ID = os.getenv("OWNER_USER_ID", "owner")
+
+# Which channels to start (comma-separated). Used by main.py unified entry point.
+ENABLED_CHANNELS = [c.strip() for c in os.getenv("CHANNELS", "desktop").split(",") if c.strip()]
+
 # ── Composio (optional) ──
 COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY", "").strip()
 COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default").strip()

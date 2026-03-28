@@ -45,9 +45,21 @@ def _run_task(task: dict):
     # Find the channel to push results
     channel = get_channel(channel_name)
     if not channel:
-        logger.error(f"Channel '{channel_name}' not registered, cannot deliver result for task {task_id}")
+        # Original channel unavailable — try any registered channel
+        from channels.registry import list_channels
+        for fallback_name in list_channels():
+            channel = get_channel(fallback_name)
+            if channel:
+                logger.warning(
+                    f"Task {task_id}: channel '{channel_name}' unavailable, "
+                    f"falling back to '{fallback_name}'"
+                )
+                break
+
+    if not channel:
+        logger.error(f"No channels available to deliver result for task {task_id}")
         update_task(task_id, last_run_at=datetime.now(timezone.utc).isoformat(),
-                    last_result=f"Error: channel '{channel_name}' not available")
+                    last_result=f"Error: no channels available")
         return
 
     # Notify user that a scheduled task is starting

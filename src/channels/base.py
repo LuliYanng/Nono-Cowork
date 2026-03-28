@@ -12,7 +12,7 @@ import time
 import logging
 from agent_runner import run_agent_for_message
 from session import sessions
-from config import MODEL, MODEL_POOL, CONTEXT_LIMIT
+from config import MODEL, MODEL_POOL, CONTEXT_LIMIT, OWNER_USER_ID
 
 logger = logging.getLogger("channel")
 
@@ -23,7 +23,7 @@ logger = logging.getLogger("channel")
 
 def _cmd_reset(channel, user_id: str, args: str):
     """Reset the current session and start fresh."""
-    sessions.reset(user_id)
+    sessions.reset(OWNER_USER_ID)
     channel.send_status(user_id, "🔄 Session reset. You can start a new conversation.")
 
 
@@ -48,7 +48,7 @@ def _cmd_help(channel, user_id: str, args: str):
 
 def _cmd_status(channel, user_id: str, args: str):
     """Show current session status: model, tokens, context usage."""
-    info = sessions.get_status(user_id)
+    info = sessions.get_status(OWNER_USER_ID)
     if not info:
         channel.send_status(user_id, "ℹ️ No active session. Send a message to start one.")
         return
@@ -90,7 +90,7 @@ def _cmd_status(channel, user_id: str, args: str):
 
 def _cmd_stop(channel, user_id: str, args: str):
     """Stop the currently running agent task."""
-    if sessions.request_stop(user_id):
+    if sessions.request_stop(OWNER_USER_ID):
         channel.send_status(user_id, "🛑 Stop requested. The agent will halt after the current step.")
     else:
         channel.send_status(user_id, "ℹ️ No active session to stop.")
@@ -100,8 +100,8 @@ def _cmd_compact(channel, user_id: str, args: str):
     """Manually compress the session context to free up space."""
     from context.compressor import compress_history
 
-    session = sessions.get_or_create(user_id)
-    lock = sessions.get_lock(user_id)
+    session = sessions.get_or_create(OWNER_USER_ID)
+    lock = sessions.get_lock(OWNER_USER_ID)
 
     if not lock.acquire(blocking=False):
         channel.send_status(user_id, "⏳ Agent is running. Wait for it to finish before compacting.")
@@ -137,7 +137,7 @@ def _cmd_model(channel, user_id: str, args: str):
 
     if not args:
         # Show current model and reference list
-        current = sessions.get_model(user_id) or MODEL
+        current = sessions.get_model(OWNER_USER_ID) or MODEL
         lines = [
             f"🤖 Current model: `{current}`",
             f"Default: `{MODEL}`",
@@ -153,31 +153,31 @@ def _cmd_model(channel, user_id: str, args: str):
 
     # Reset to default
     if args.lower() in ("reset", "default"):
-        sessions.set_model(user_id, None)
+        sessions.set_model(OWNER_USER_ID, None)
         channel.send_status(user_id, f"🤖 Model reset to default: `{MODEL}`")
         return
 
     # Set model by name (user provides the exact model identifier)
-    sessions.set_model(user_id, args)
+    sessions.set_model(OWNER_USER_ID, args)
     channel.send_status(user_id, f"🤖 Model switched to: `{args}`")
 
 
 def _cmd_new(channel, user_id: str, args: str):
     """Start a new session (archives the current one)."""
-    sessions.reset(user_id)
+    sessions.reset(OWNER_USER_ID)
     channel.send_status(user_id, "✨ New session started. Previous session saved.")
 
 
 def _cmd_sessions(channel, user_id: str, args: str):
     """List saved sessions for this user."""
-    saved = sessions.list_sessions(user_id)
+    saved = sessions.list_sessions(OWNER_USER_ID)
     if not saved:
         channel.send_status(user_id, "📭 No saved sessions.")
         return
 
     # Mark which one is active
     active_id = None
-    status = sessions.get_status(user_id)
+    status = sessions.get_status(OWNER_USER_ID)
     if status:
         active_id = status.get("session_id")
 
@@ -199,12 +199,12 @@ def _cmd_switch(channel, user_id: str, args: str):
         channel.send_status(user_id, "Usage: `/switch <session_id>`\nUse `/sessions` to see available sessions.")
         return
 
-    lock = sessions.get_lock(user_id)
+    lock = sessions.get_lock(OWNER_USER_ID)
     if not lock.acquire(blocking=False):
         channel.send_status(user_id, "⏳ Agent is running. Wait for it to finish before switching.")
         return
     try:
-        if sessions.switch_session(user_id, session_id):
+        if sessions.switch_session(OWNER_USER_ID, session_id):
             channel.send_status(user_id, f"🔄 Switched to session `{session_id}`.")
         else:
             channel.send_status(user_id, f"❌ Session `{session_id}` not found.")
@@ -264,11 +264,17 @@ class Channel(ABC):
 
         Subclass message handlers should parse out user_id and user_text, then call this method.
         """
+        # Preserve the channel-native ID for message delivery (Feishu needs open_id,
+        # Telegram needs numeric ID). OWNER_USER_ID is only for session indexing.
+        from config import OWNER_USER_ID
+        raw_user_id = user_id       # original channel ID — used for send_reply/send_status
+        session_id = OWNER_USER_ID  # unified ID — used for session management
+
         user_text = user_text.strip()
         if not user_text:
             return
 
-        logger.info(f"[{self.name}] Message from {user_id}: {user_text}")
+        logger.info(f"[{self.name}] Message from {raw_user_id} (session: {session_id}): {user_text}")
 
         # ── Slash command dispatch ──
         if user_text.startswith("/"):
@@ -278,29 +284,34 @@ class Channel(ABC):
 
             handler = SLASH_COMMANDS.get(cmd_name)
             if handler:
-                handler[0](self, user_id, cmd_args)
+                handler[0](self, raw_user_id, cmd_args)
                 return
-            # Also support bare "reset" / "help" without slash
-        elif user_text.lower() in ("reset", "help"):
-            handler = SLASH_COMMANDS.get(user_text.lower())
+            # Also support bare command words without "/" prefix.
+            # Some IM platforms (Feishu) intercept /slash messages, so users
+            # can type "sessions", "new", "stop" etc. directly.
+        else:
+            parts = user_text.split(None, 1)
+            bare_cmd = parts[0].lower()
+            bare_args = parts[1] if len(parts) > 1 else ""
+            handler = SLASH_COMMANDS.get(bare_cmd)
             if handler:
-                handler[0](self, user_id, "")
+                handler[0](self, raw_user_id, bare_args)
                 return
 
         # "Processing" notification
-        self.send_status(user_id, "Thinking...")
+        self.send_status(raw_user_id, "Thinking...")
 
-        # Build callbacks
+        # Build callbacks — use raw_user_id so messages go to the right channel recipient
         def reply_func(text):
-            self.send_reply(user_id, text)
+            self.send_reply(raw_user_id, text)
 
         def status_func(text):
-            self.send_status(user_id, text)
+            self.send_status(raw_user_id, text)
 
-        # Run Agent in a separate thread
+        # Run Agent in a separate thread — use session_id for session management
         thread = threading.Thread(
             target=run_agent_for_message,
-            args=(user_id, user_text, reply_func, status_func, self.name),
+            args=(session_id, user_text, reply_func, status_func, self.name),
             daemon=True,
         )
         thread.start()

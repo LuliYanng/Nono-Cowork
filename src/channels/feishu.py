@@ -203,6 +203,8 @@ class FeishuChannel(Channel):
             if not user_text:
                 return
 
+            logger.info(f"Feishu raw text from {open_id}: {user_text!r}")
+
             # Dispatch to base class (handles special commands + starts Agent thread)
             self.dispatch(open_id, user_text, extra_context={
                 "chat_type": chat_type,
