@@ -26,8 +26,8 @@ from sse_starlette.sse import EventSourceResponse
 
 from channels.base import Channel, SLASH_COMMANDS
 from channels.registry import register_channel
-from session import sessions
-from config import MODEL, CONTEXT_LIMIT
+from session import sessions, _serialize_history
+from config import MODEL, MODEL_POOL, CONTEXT_LIMIT
 
 logger = logging.getLogger("channel.desktop")
 
@@ -288,9 +288,141 @@ async def chat(request: Request):
     return EventSourceResponse(event_generator())
 
 
+# ── RESTful: Session Management ──
+
+@app.get("/api/sessions")
+async def list_sessions():
+    """List all saved sessions for the desktop user."""
+    saved = sessions.list_sessions(DESKTOP_USER_ID)
+
+    # Mark which session is currently active
+    status = sessions.get_status(DESKTOP_USER_ID)
+    active_id = status["session_id"] if status else None
+
+    for s in saved:
+        s["is_current"] = (s["id"] == active_id)
+
+    return {"sessions": saved}
+
+
+@app.post("/api/sessions")
+async def create_session():
+    """Archive the current session and start a new one."""
+    sessions.reset(DESKTOP_USER_ID)
+    new_status = sessions.get_status(DESKTOP_USER_ID)
+    return {
+        "session_id": new_status["session_id"] if new_status else None,
+        "message": "New session created",
+    }
+
+
+@app.get("/api/sessions/current")
+async def get_current_session():
+    """Get the current session details including message history."""
+    session = sessions.get_or_create(DESKTOP_USER_ID)
+    info = sessions.get_status(DESKTOP_USER_ID)
+
+    # Filter messages for the frontend:
+    # - Strip system prompt (large, not useful for display)
+    # - Serialize LiteLLM objects to plain dicts
+    raw_history = _serialize_history(session["history"])
+    display_messages = [
+        msg for msg in raw_history if msg.get("role") != "system"
+    ]
+
+    return {
+        "id": session["session_id"],
+        "messages": display_messages,
+        "model": session.get("model_override") or MODEL,
+        "created_at": session["created_at"],
+        "last_active": session["last_active"],
+        "token_stats": dict(session["token_stats"]),
+        "is_running": info["is_running"] if info else False,
+    }
+
+
+@app.put("/api/sessions/{session_id}/switch")
+async def switch_session(session_id: str):
+    """Switch to a different saved session."""
+    lock = sessions.get_lock(DESKTOP_USER_ID)
+    if not lock.acquire(blocking=False):
+        return JSONResponse(
+            {"error": "Agent is currently running. Wait for it to finish before switching."},
+            status_code=409,
+        )
+    try:
+        ok = sessions.switch_session(DESKTOP_USER_ID, session_id)
+    finally:
+        lock.release()
+
+    if not ok:
+        return JSONResponse(
+            {"error": f"Session '{session_id}' not found"},
+            status_code=404,
+        )
+    return {"message": f"Switched to session {session_id}"}
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a saved session."""
+    # Check if trying to delete the current session
+    status = sessions.get_status(DESKTOP_USER_ID)
+    if status and status["session_id"] == session_id:
+        return JSONResponse(
+            {"error": "Cannot delete the currently active session. Switch to another session first."},
+            status_code=409,
+        )
+
+    ok = sessions.delete_session(DESKTOP_USER_ID, session_id)
+    if not ok:
+        return JSONResponse(
+            {"error": f"Session '{session_id}' not found"},
+            status_code=404,
+        )
+    return {"message": f"Session {session_id} deleted"}
+
+
+# ── RESTful: Model Management ──
+
+@app.get("/api/models")
+async def list_models():
+    """Get the list of available models and the currently active model."""
+    current = sessions.get_model(DESKTOP_USER_ID) or MODEL
+    return {
+        "current": current,
+        "default": MODEL,
+        "available": list(MODEL_POOL),
+    }
+
+
+@app.put("/api/models/current")
+async def set_model(request: Request):
+    """Switch the LLM model for the current session."""
+    body = await request.json()
+    model = body.get("model", "").strip()
+
+    if not model:
+        return JSONResponse({"error": "Missing 'model' field"}, status_code=400)
+
+    # "reset" / "default" → clear override, use global default
+    if model.lower() in ("reset", "default"):
+        sessions.set_model(DESKTOP_USER_ID, None)
+        return {"model": MODEL, "message": f"Model reset to default: {MODEL}"}
+
+    sessions.set_model(DESKTOP_USER_ID, model)
+    return {"model": model, "message": f"Model switched to: {model}"}
+
+
+# ── Slash command compat layer (for IM channels) ──
+
 @app.post("/api/command/{cmd}")
 async def command(cmd: str, request: Request):
-    """Execute a slash command (/reset, /stop, /model, /compact, /status, /help)."""
+    """Execute a slash command — compatibility layer for IM channels.
+
+    Desktop frontend should prefer the RESTful endpoints above.
+    This returns human-readable text, not structured JSON.
+    """
     body = await request.json() if request.headers.get("content-length", "0") != "0" else {}
     args = body.get("args", "")
 
@@ -298,20 +430,19 @@ async def command(cmd: str, request: Request):
     if not handler:
         return JSONResponse({"error": f"unknown command: {cmd}"}, status_code=404)
 
-    # Collect status messages
-    responses = []
+    # Use a lightweight shim channel to capture text output
+    # instead of monkey-patching the real channel (thread-safe)
+    responses: list[str] = []
 
-    def capture_status(user_id, text):
-        responses.append(text)
+    class _CaptureChannel:
+        """Minimal channel-like object that collects send_status output."""
+        name = "desktop"
+        def send_status(self, user_id, text):
+            responses.append(text)
+        def send_reply(self, user_id, text):
+            responses.append(text)
 
-    # Temporarily override send_status to capture output
-    original_send_status = channel.send_status
-    channel.send_status = lambda uid, text: responses.append(text)
-    try:
-        handler[0](channel, DESKTOP_USER_ID, args)
-    finally:
-        channel.send_status = original_send_status
-
+    handler[0](_CaptureChannel(), DESKTOP_USER_ID, args)
     return {"result": "\n".join(responses)}
 
 
@@ -348,10 +479,17 @@ def main():
     print(f"🖥️  Desktop Channel started on http://0.0.0.0:{DESKTOP_PORT}")
     print(f"   Model: {MODEL}")
     print(f"   API endpoints:")
-    print(f"     POST /api/chat     — send message (SSE stream)")
-    print(f"     GET  /api/status   — session status")
-    print(f"     POST /api/command/ — slash commands")
-    print(f"     GET  /api/health   — health check")
+    print(f"     POST /api/chat                     — send message (SSE)")
+    print(f"     GET  /api/status                   — session status")
+    print(f"     GET  /api/sessions                 — list sessions")
+    print(f"     POST /api/sessions                 — new session")
+    print(f"     GET  /api/sessions/current          — current session detail")
+    print(f"     PUT  /api/sessions/:id/switch       — switch session")
+    print(f"     DELETE /api/sessions/:id             — delete session")
+    print(f"     GET  /api/models                   — list models")
+    print(f"     PUT  /api/models/current            — switch model")
+    print(f"     GET  /api/health                   — health check")
+    print(f"     POST /api/command/                 — slash command (IM compat)")
     print("=" * 50)
 
     uvicorn.run(app, host="0.0.0.0", port=DESKTOP_PORT, log_level="info")

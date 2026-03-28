@@ -403,6 +403,39 @@ class SessionManager:
         logger.info("Switched user %s to session %s", user_id, session_id)
         return True
 
+    def delete_session(self, user_id: str, session_id: str) -> bool:
+        """Delete a saved session. Returns True on success.
+
+        Cannot delete the currently active session — the caller should
+        switch away first or start a new session if needed.
+        """
+        # Refuse to delete the active session
+        with self._global_lock:
+            active = self._sessions.get(user_id)
+            if active and active["session_id"] == session_id:
+                return False
+
+        filepath = _session_path(session_id)
+        if not os.path.exists(filepath):
+            return False
+
+        # Verify ownership
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("user_id") != user_id:
+                return False
+        except Exception:
+            return False
+
+        try:
+            os.remove(filepath)
+            logger.info("Deleted session %s for user %s", session_id, user_id)
+            return True
+        except Exception as e:
+            logger.error("Failed to delete session %s: %s", session_id, e)
+            return False
+
     def close_all(self):
         """Save and close all sessions (for shutdown)."""
         with self._global_lock:
