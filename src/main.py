@@ -67,10 +67,15 @@ def main():
     recover_orphaned_logs()
     atexit.register(sessions.close_all)
     atexit.register(scheduler.stop)
+    from syncthing_watcher import stop_watcher as stop_sync_watcher
+    atexit.register(stop_sync_watcher)
 
     # ── 2. Shared services (once) ──
     scheduler.start()
     start_trigger_listener()
+
+    from syncthing_watcher import start_watcher as start_sync_watcher
+    start_sync_watcher()
 
     # ── 3. Create and register channels ──
     desktop_info = None

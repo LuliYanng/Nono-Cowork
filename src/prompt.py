@@ -64,7 +64,8 @@ def _section_environment(workspace: str) -> str:
 - Files synced in real-time with the user's local machine via Syncthing
 - You can freely use all tools on the server (Python, Shell, network, etc.)
 - You can directly download files from any URL using curl/wget — no need for remote sandboxes
-- Document processing libraries available: pymupdf (PDF), openpyxl (Excel), python-docx (Word)"""
+- read_file natively supports PDF, Excel (.xlsx), and Word (.docx) — just call read_file(path) directly, do NOT try to import pymupdf/openpyxl/python-docx yourself
+- run_command uses /bin/sh (POSIX shell), NOT bash. Use '.' instead of 'source' for activating venvs"""
 
 
 # ─── Service status probes ──────────────────────────────────────
@@ -239,6 +240,13 @@ Do NOT call sync tools for operations outside {workspace} (e.g., installing skil
 - WHEN you see any file matching *.sync-conflict-* pattern (via ls or find): alert the user immediately — this means both sides edited the same file. Compare both versions and ask which to keep
 - WHEN the user says "undo" or wants to revert your edit: call list_snapshots() to find the pre-edit backup, then cp it back
 
+## File Sync Awareness
+- When the user's message includes a <file_sync_activity> block, it lists files recently synced from their local device. Use this to understand what "that file", "the one I just uploaded", or "those PDFs" refers to
+- If a file is marked ⏳ syncing, it has not finished downloading yet — call sync_wait() before trying to read it
+- If a ⚠️ CONFLICT is noted, alert the user about the sync-conflict file immediately
+- This context is injected automatically — do NOT ask the user to specify file paths when they clearly refer to recently synced files
+- If no <file_sync_activity> block is present, no files were recently synced from the user's device
+
 ## Workspace Hygiene (CRITICAL)
 The sync folder ({workspace}) is ONLY for user-facing files. NEVER create intermediate artifacts here:
 - NEVER create Python virtual environments (venv, .venv) inside {workspace}. Use {AGENT_WORK_DIR}/ instead
@@ -277,8 +285,8 @@ def _section_work_habits() -> str:
 - ALWAYS use edit_file to modify existing files — it auto-saves a backup before each edit. NEVER use run_command("sed -i ...") or shell redirects to modify files in the sync folder, because those bypass the backup system
 - When encountering errors, carefully analyze the traceback and identify the root cause before fixing
 - If the same error persists after 3 fix attempts, proactively search the web for solutions
-- Use uv to manage Python environments and dependencies
-- When running scripts that need a venv, create it in {AGENT_WORK_DIR}/ — NEVER in the sync folder"""
+- When you need extra Python packages, create a venv with `python3 -m venv {AGENT_WORK_DIR}/.venv` and install there. NEVER create venvs in the sync folder
+- To run scripts with the venv: `. {AGENT_WORK_DIR}/.venv/bin/activate && pip install ... && python3 script.py`"""
 
 
 def _section_safety(workspace: str) -> str:

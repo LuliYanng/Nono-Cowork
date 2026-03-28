@@ -6,6 +6,7 @@ Responsibilities: session management, concurrency control, calling agent_loop, e
 import logging
 from session import sessions
 from context import set_context, clear_context
+from syncthing_watcher import get_sync_context
 
 logger = logging.getLogger("agent_runner")
 
@@ -50,8 +51,18 @@ def run_agent_for_message(user_id: str, user_text: str,
         log_file = session["log_file"]  # Session-level log file
         model_override = session.get("model_override")  # Per-session model
 
-        # Append user message
-        history.append({"role": "user", "content": user_text})
+        # Augment user message with recent file sync context (if any)
+        sync_ctx = get_sync_context()
+        augmented_text = f"{sync_ctx}\n\n{user_text}" if sync_ctx else user_text
+
+        # Log to journalctl for live debugging
+        logger.info("[%s] User: %s", channel_name, user_text)
+        if sync_ctx:
+            logger.info("[%s] Sync context injected:\n%s", channel_name, sync_ctx)
+
+        # Append augmented message to history (sync context visible to LLM)
+        history.append({"role": "user", "content": augmented_text})
+        # Log the original text (without injected context) to session log file
         log_event(log_file, {
             "type": f"{channel_name}_message",
             "user_id": user_id,
