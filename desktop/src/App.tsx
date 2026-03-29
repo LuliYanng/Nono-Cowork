@@ -50,7 +50,50 @@ import {
   ContextOutputUsage,
   ContextCacheUsage,
 } from "@/components/ai-elements/context";
-import { PanelLeft } from "lucide-react";
+import {
+  ModelSelector,
+  ModelSelectorTrigger,
+  ModelSelectorContent,
+  ModelSelectorInput,
+  ModelSelectorList,
+  ModelSelectorEmpty,
+  ModelSelectorGroup,
+  ModelSelectorItem,
+  ModelSelectorLogo,
+  ModelSelectorName,
+} from "@/components/ai-elements/model-selector";
+import { PanelLeft, ChevronDown, Square } from "lucide-react";
+import { Button } from "@/components/ui/button";
+
+// Map litellm provider names → ModelSelectorLogo provider names
+const PROVIDER_LOGO_MAP: Record<string, string> = {
+  gemini: "google",
+  anthropic: "anthropic",
+  openai: "openai",
+  deepseek: "deepseek",
+  dashscope: "alibaba",
+  mistral: "mistral",
+  groq: "groq",
+  xai: "xai",
+};
+
+// Capitalize provider name for display
+function displayProvider(provider: string): string {
+  const names: Record<string, string> = {
+    gemini: "Google",
+    anthropic: "Anthropic",
+    openai: "OpenAI",
+    deepseek: "DeepSeek",
+    dashscope: "DashScope",
+    mistral: "Mistral",
+    groq: "Groq",
+    xai: "xAI",
+  };
+  return names[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+// Available models from backend
+type AvailableModels = string[];
 
 // ── Types ──
 
@@ -183,10 +226,12 @@ function authHeaders(extra: Record<string, string> = {}): Record<string, string>
 function PartsRenderer({
   parts,
   isActive,
+  isStreaming,
   defaultCollapsed = false,
 }: {
   parts: MessagePart[];
   isActive: boolean;
+  isStreaming?: boolean;
   defaultCollapsed?: boolean;
 }) {
   const items: React.ReactNode[] = [];
@@ -214,7 +259,9 @@ function PartsRenderer({
       let toolState: "input-available" | "output-available" | "input-streaming";
       if (hasResult) {
         toolState = "output-available";
-      } else if (isActive) {
+      } else if (isActive || (isStreaming && part.toolName === "delegate")) {
+        // delegate stays "Running" as long as the stream is active (even if
+        // thinkingMsgId was temporarily cleared by a status event)
         toolState = "input-available";
       } else {
         toolState = "input-streaming";
@@ -223,12 +270,32 @@ function PartsRenderer({
       // Historical messages: collapsed by default; live streaming: auto-expand
       const shouldOpen = defaultCollapsed ? false : toolState === "output-available";
 
+      // Stop button for long-running delegate tool — show whenever delegate
+      // is still running (stream active + no result), independent of thinkingMsgId
+      const delegateStopAction =
+        part.toolName === "delegate" && !hasResult && isStreaming ? (
+          <button
+            className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-red-500 hover:bg-red-500/10 hover:text-red-600 transition-colors cursor-pointer"
+            onClick={() => {
+              fetch(`${API_BASE}/api/command/stop`, {
+                method: "POST",
+                headers: authHeaders({ "Content-Type": "application/json" }),
+                body: JSON.stringify({ scope: "delegate" }),
+              }).catch(() => {});
+            }}
+          >
+            <Square className="size-3 fill-current" />
+            Stop
+          </button>
+        ) : undefined;
+
       items.push(
         <Tool key={`t-${i}`} defaultOpen={shouldOpen}>
           <ToolHeader
             title={part.toolName || "tool"}
             type={`tool-${part.toolName || "unknown"}` as `tool-${string}`}
             state={toolState}
+            actions={delegateStopAction}
           />
           <ToolContent>
             {part.args && Object.keys(part.args).length > 0 && (
@@ -263,7 +330,6 @@ function App() {
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>({
     active: false,
   });
-  const [connected, setConnected] = useState<boolean | null>(null);
   const idCounter = useRef(0);
   const inputRef = useRef(input);
   inputRef.current = input;
@@ -273,16 +339,19 @@ function App() {
   const [thinkingMsgId, setThinkingMsgId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sessionList, setSessionList] = useState<SessionItem[]>([]);
+  const [availableModels, setAvailableModels] = useState<AvailableModels>([]);
+  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
+  // Track whether a stop request has been sent (for immediate UI feedback)
+  const [isStopping, setIsStopping] = useState(false);
 
   // Health check on mount
   useEffect(() => {
     fetch(`${API_BASE}/api/health`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((data) => {
-        setConnected(true);
         setSessionStatus((prev) => ({ ...prev, model: data.model }));
       })
-      .catch(() => setConnected(false));
+      .catch(() => {});
   }, []);
 
   // Keyboard shortcuts
@@ -291,6 +360,10 @@ function App() {
       if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
         e.preventDefault();
         setSidebarOpen((prev) => !prev);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'M') {
+        e.preventDefault();
+        setModelSelectorOpen((prev) => !prev);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -314,6 +387,33 @@ function App() {
     }
   }, []);
 
+  // Fetch available models list
+  const fetchModels = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/models`, { headers: authHeaders() });
+      const data = await res.json();
+      setAvailableModels(data.available || []);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Switch model
+  const handleModelSwitch = useCallback(async (model: string) => {
+    try {
+      await fetch(`${API_BASE}/api/models/current`, {
+        method: "PUT",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ model }),
+      });
+      // Immediately update the single source of truth
+      setSessionStatus(prev => ({ ...prev, model }));
+      setModelSelectorOpen(false);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   // Fetch session list for sidebar
   const fetchSessions = useCallback(async () => {
     try {
@@ -332,6 +432,7 @@ function App() {
     // Show skeleton immediately for instant visual feedback
     setLoadingSession(true);
     setMessages([]);
+    setIsStopping(false);
 
     try {
       // Single request: switch endpoint now returns session data inline
@@ -360,10 +461,11 @@ function App() {
     }
   }, [isStreaming, refreshStatus, fetchSessions]);
 
-  // Load session list on mount
+  // Load session list and models on mount
   useEffect(() => {
     fetchSessions();
-  }, [fetchSessions]);
+    fetchModels();
+  }, [fetchSessions, fetchModels]);
 
   // Send message — called by PromptInput onSubmit with { text, files }
   const handleSubmit = useCallback(async () => {
@@ -443,6 +545,9 @@ function App() {
 
               if (eventType === "status") {
                 setStatusText(data.text);
+                // Clear thinking state so status text can be displayed
+                // (thinkingMsgId stays set after thought events, blocking status visibility)
+                setThinkingMsgId(null);
               } else if (eventType === "reasoning_chunk") {
                 currentReasoning += (data.content || "");
                 setThinkingMsgId(assistantId);
@@ -498,6 +603,7 @@ function App() {
       ]);
     } finally {
       setIsStreaming(false);
+      setIsStopping(false);
       setAnimatingMsgId(null);
       setThinkingMsgId(null);
       setStatusText("");
@@ -505,22 +611,6 @@ function App() {
       fetchSessions();
     }
   }, [isStreaming, nextId, refreshStatus, fetchSessions]);
-
-
-  // Connection indicator color
-  const connColor =
-    connected === true
-      ? "text-green-500"
-      : connected === false
-        ? "text-red-500"
-        : "text-yellow-500";
-  const connLabel =
-    connected === true
-      ? "Connected"
-      : connected === false
-        ? "Disconnected"
-        : "Connecting...";
-
 
 
   // PromptInput onSubmit handler — receives { text, files } from the component
@@ -544,6 +634,7 @@ function App() {
                 headers: authHeaders(),
               });
               setMessages([]);
+              setIsStopping(false);
               refreshStatus();
               fetchSessions();
             } catch { /* ignore */ }
@@ -573,7 +664,6 @@ function App() {
               {!sidebarOpen && (
                 <span className="text-[13px] font-medium text-muted-foreground">Nono CoWork</span>
               )}
-              <span className={`text-xs ${connColor}`}>● {connLabel}</span>
             </div>
             <div
               className="flex items-center gap-2"
@@ -606,140 +696,299 @@ function App() {
             </div>
           </header>
 
-          {/* Chat area */}
-          <Conversation className="flex-1">
-            <ConversationContent className="w-[85%] max-w-5xl mx-auto pb-6">
-                {/* Skeleton loading for session switch */}
-                {loadingSession && (
-                  <div className="flex flex-col gap-5 py-4 animate-pulse">
-                    {/* User message skeleton */}
-                    <div className="flex justify-end">
-                      <div className="rounded-lg bg-secondary/60 h-10 w-[45%]"></div>
-                    </div>
-                    {/* Assistant message skeleton */}
-                    <div className="flex flex-col gap-2.5 w-[75%]">
-                      <div className="rounded bg-muted/50 h-3.5 w-full"></div>
-                      <div className="rounded bg-muted/50 h-3.5 w-[92%]"></div>
-                      <div className="rounded bg-muted/50 h-3.5 w-[60%]"></div>
-                    </div>
-                    {/* User message skeleton */}
-                    <div className="flex justify-end">
-                      <div className="rounded-lg bg-secondary/60 h-8 w-[35%]"></div>
-                    </div>
-                    {/* Assistant message skeleton */}
-                    <div className="flex flex-col gap-2.5 w-[80%]">
-                      <div className="rounded bg-muted/50 h-3.5 w-full"></div>
-                      <div className="rounded bg-muted/50 h-3.5 w-[85%]"></div>
-                      <div className="rounded bg-muted/40 h-3.5 w-[70%]"></div>
-                      <div className="rounded bg-muted/30 h-3.5 w-[45%]"></div>
-                    </div>
-                  </div>
-                )}
-                {messages.length === 0 && !isStreaming && !loadingSession && (
-                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
-                    <p className="text-lg">👋 Ready to chat</p>
-                    <p className="text-sm">
-                      Send a message to start a conversation
-                    </p>
-                  </div>
-                )}
-                {messages.map((msg) => (
-                  <Message key={msg.id} from={msg.role}>
-                    <MessageContent>
-                      {msg.role === "assistant" ? (
-                        <>
-                          {msg.reasoning && (
-                            <Reasoning
-                              isStreaming={msg.id === thinkingMsgId && !msg.content}
-                              className="w-full"
+          {/* Conditional layout: centered welcome vs conversation */}
+          {messages.length === 0 && !isStreaming && !loadingSession ? (
+            /* ── Welcome screen: centered ── */
+            <div className="flex-1 flex flex-col items-center justify-center px-4">
+              <div className="w-[85%] max-w-3xl flex flex-col items-center gap-8">
+                <h1
+                  className="text-[3rem] text-foreground/70 tracking-wide"
+                  style={{ fontFamily: "'Lora', serif" }}
+                >
+                  Nono CoWork
+                </h1>
+                <div className="w-full">
+                  <PromptInput
+                    onSubmit={handlePromptSubmit}
+                  >
+                    <PromptInputTextarea
+                      placeholder="Type a message..."
+                      value={input}
+                      onChange={(e) => setInput(e.currentTarget.value)}
+                    />
+                    <PromptInputFooter>
+                      <div className="flex items-center gap-1">
+                        {/* Model Selector */}
+                        <ModelSelector open={modelSelectorOpen} onOpenChange={(open) => {
+                          setModelSelectorOpen(open);
+                          if (open) fetchModels();
+                        }}>
+                          <ModelSelectorTrigger>
+                            <Button
+                              variant="ghost"
+                              className="h-6 px-1.5 text-[11px] text-muted-foreground/60 hover:text-foreground cursor-pointer gap-1"
                             >
-                              <ReasoningTrigger />
-                              <ReasoningContent>{msg.reasoning}</ReasoningContent>
-                            </Reasoning>
-                          )}
-                          {msg.parts && msg.parts.length > 0 && (
-                            <PartsRenderer
-                              parts={msg.parts}
-                              isActive={msg.id === thinkingMsgId}
-                              defaultCollapsed={msg.id.startsWith("hist-")}
-                            />
-                          )}
-                        </>
-                      ) : (
-                        <p className="whitespace-pre-wrap">{msg.content}</p>
-                      )}
-                    </MessageContent>
-                  </Message>
-                ))}
-                {isStreaming && !animatingMsgId && !thinkingMsgId && statusText && (
-                  <div className="text-sm text-muted-foreground animate-pulse px-1">
-                    {statusText}
-                  </div>
-                )}
-            </ConversationContent>
-            <ConversationScrollButton />
-          </Conversation>
-
-          {/* Input area with gradient fade above */}
-          <div className="relative shrink-0 px-4 pb-4">
-            <div className="pointer-events-none absolute inset-x-0 -top-8 h-8 bg-gradient-to-t from-background to-transparent" />
-            <div className="w-[85%] max-w-5xl mx-auto">
-              <PromptInput
-                onSubmit={handlePromptSubmit}
-              >
-                <PromptInputTextarea
-                  placeholder="Type a message..."
-                  value={input}
-                  onChange={(e) => setInput(e.currentTarget.value)}
-                />
-                <PromptInputFooter>
-                  {sessionStatus.active && (sessionStatus.prompt_tokens ?? 0) > 0 ? (
-                    <Context
-                      usedTokens={sessionStatus.prompt_tokens ?? 0}
-                      maxTokens={sessionStatus.context_limit ?? 200000}
-                      modelId={sessionStatus.model?.replace('/', ':') ?? ''}
-                      usage={{
-                        inputTokens: sessionStatus.total_prompt_tokens ?? 0,
-                        outputTokens: sessionStatus.total_completion_tokens ?? 0,
-                        totalTokens: sessionStatus.total_tokens ?? 0,
-                        cachedInputTokens: sessionStatus.total_cached_tokens ?? 0,
-                        inputTokenDetails: { cacheReadTokens: sessionStatus.total_cached_tokens ?? 0, noCacheTokens: undefined, cacheWriteTokens: undefined },
-                        outputTokenDetails: { textTokens: undefined, reasoningTokens: undefined },
-                      }}
-                    >
-                      <ContextTrigger className="h-6 px-1.5 text-[11px] text-muted-foreground/60" />
-                      <ContextContent side="top" align="start">
-                        <ContextContentHeader />
-                        <ContextContentBody className="space-y-1">
-                          <ContextInputUsage />
-                          <ContextOutputUsage />
-                          <ContextCacheUsage />
-                        </ContextContentBody>
-                      </ContextContent>
-                    </Context>
-                  ) : (
-                    sessionStatus.model && (
-                      <span className="text-[11px] text-muted-foreground/50">
-                        {sessionStatus.model.split('/').pop()}
-                      </span>
-                    )
-                  )}
-                  <PromptInputSubmit
-                    className="cursor-pointer"
-                    disabled={!isStreaming && !input.trim()}
-                    status={isStreaming ? "streaming" : "ready"}
-                    onStop={() => {
-                      fetch(`${API_BASE}/api/command/stop`, {
-                        method: "POST",
-                        headers: authHeaders({ "Content-Type": "application/json" }),
-                        body: JSON.stringify({}),
-                      }).catch(() => {});
-                    }}
-                  />
-                </PromptInputFooter>
-              </PromptInput>
+                              {(() => {
+                                const current = sessionStatus.model || '';
+                                const provider = current.split('/')[0];
+                                const logoProvider = PROVIDER_LOGO_MAP[provider];
+                                return (
+                                  <>
+                                    {logoProvider && <ModelSelectorLogo provider={logoProvider} className="size-3" />}
+                                    <span>{current.split('/').pop() || 'Select model'}</span>
+                                    <ChevronDown className="size-3 opacity-50" />
+                                  </>
+                                );
+                              })()}
+                            </Button>
+                          </ModelSelectorTrigger>
+                          <ModelSelectorContent title="Select a Model">
+                            <ModelSelectorInput placeholder="Search models..." />
+                            <ModelSelectorList>
+                              <ModelSelectorEmpty>No models found.</ModelSelectorEmpty>
+                              {Object.entries(
+                                availableModels.reduce<Record<string, string[]>>((groups, m) => {
+                                  const [provider] = m.split('/');
+                                  const key = provider || 'other';
+                                  if (!groups[key]) groups[key] = [];
+                                  groups[key].push(m);
+                                  return groups;
+                                }, {})
+                              ).map(([provider, models]) => (
+                                <ModelSelectorGroup key={provider} heading={displayProvider(provider)}>
+                                  {models.map((m) => {
+                                    const modelName = m.split('/').slice(1).join('/');
+                                    const logoProvider = PROVIDER_LOGO_MAP[provider];
+                                    const isCurrent = m === sessionStatus.model;
+                                    return (
+                                      <ModelSelectorItem
+                                        key={m}
+                                        value={m}
+                                        onSelect={() => handleModelSwitch(m)}
+                                        className={isCurrent ? 'bg-accent' : ''}
+                                      >
+                                        {logoProvider && <ModelSelectorLogo provider={logoProvider} className="size-4 mr-2" />}
+                                        <ModelSelectorName>{modelName}</ModelSelectorName>
+                                        {isCurrent && <span className="text-xs text-muted-foreground">current</span>}
+                                      </ModelSelectorItem>
+                                    );
+                                  })}
+                                </ModelSelectorGroup>
+                              ))}
+                            </ModelSelectorList>
+                          </ModelSelectorContent>
+                        </ModelSelector>
+                      </div>
+                      <PromptInputSubmit
+                        className="cursor-pointer"
+                        disabled={!isStreaming && !input.trim()}
+                        status={isStopping ? "submitted" : isStreaming ? "streaming" : "ready"}
+                        onStop={() => {
+                          if (isStopping) return;
+                          setIsStopping(true);
+                          fetch(`${API_BASE}/api/command/stop`, {
+                            method: "POST",
+                            headers: authHeaders({ "Content-Type": "application/json" }),
+                            body: JSON.stringify({}),
+                          }).catch(() => {});
+                        }}
+                      />
+                    </PromptInputFooter>
+                  </PromptInput>
+                </div>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* ── Conversation mode: messages + input at bottom ── */
+            <>
+              <Conversation className="flex-1">
+                <ConversationContent className="w-[85%] max-w-5xl mx-auto pb-6">
+                    {/* Skeleton loading for session switch */}
+                    {loadingSession && (
+                      <div className="flex flex-col gap-5 py-4 animate-pulse">
+                        {/* User message skeleton */}
+                        <div className="flex justify-end">
+                          <div className="rounded-lg bg-secondary/60 h-10 w-[45%]"></div>
+                        </div>
+                        {/* Assistant message skeleton */}
+                        <div className="flex flex-col gap-2.5 w-[75%]">
+                          <div className="rounded bg-muted/50 h-3.5 w-full"></div>
+                          <div className="rounded bg-muted/50 h-3.5 w-[92%]"></div>
+                          <div className="rounded bg-muted/50 h-3.5 w-[60%]"></div>
+                        </div>
+                        {/* User message skeleton */}
+                        <div className="flex justify-end">
+                          <div className="rounded-lg bg-secondary/60 h-8 w-[35%]"></div>
+                        </div>
+                        {/* Assistant message skeleton */}
+                        <div className="flex flex-col gap-2.5 w-[80%]">
+                          <div className="rounded bg-muted/50 h-3.5 w-full"></div>
+                          <div className="rounded bg-muted/50 h-3.5 w-[85%]"></div>
+                          <div className="rounded bg-muted/40 h-3.5 w-[70%]"></div>
+                          <div className="rounded bg-muted/30 h-3.5 w-[45%]"></div>
+                        </div>
+                      </div>
+                    )}
+                    {messages.map((msg) => (
+                      <Message key={msg.id} from={msg.role}>
+                        <MessageContent>
+                          {msg.role === "assistant" ? (
+                            <>
+                              {msg.reasoning && (
+                                <Reasoning
+                                  isStreaming={msg.id === thinkingMsgId && !msg.content}
+                                  className="w-full"
+                                >
+                                  <ReasoningTrigger />
+                                  <ReasoningContent>{msg.reasoning}</ReasoningContent>
+                                </Reasoning>
+                              )}
+                              {msg.parts && msg.parts.length > 0 && (
+                                <PartsRenderer
+                                  parts={msg.parts}
+                                  isActive={msg.id === thinkingMsgId}
+                                  isStreaming={isStreaming}
+                                  defaultCollapsed={msg.id.startsWith("hist-")}
+                                />
+                              )}
+                            </>
+                          ) : (
+                            <p className="whitespace-pre-wrap">{msg.content}</p>
+                          )}
+                        </MessageContent>
+                      </Message>
+                    ))}
+                    {isStreaming && !animatingMsgId && !thinkingMsgId && statusText && (
+                      <div className="text-sm text-muted-foreground animate-pulse px-1">
+                        {statusText}
+                      </div>
+                    )}
+                </ConversationContent>
+                <ConversationScrollButton />
+              </Conversation>
+
+              {/* Input area with gradient fade above */}
+              <div className="relative shrink-0 px-4 pb-4">
+                <div className="pointer-events-none absolute inset-x-0 -top-8 h-8 bg-gradient-to-t from-background to-transparent" />
+                <div className="w-[85%] max-w-5xl mx-auto">
+                  <PromptInput
+                    onSubmit={handlePromptSubmit}
+                  >
+                    <PromptInputTextarea
+                      placeholder="Type a message..."
+                      value={input}
+                      onChange={(e) => setInput(e.currentTarget.value)}
+                    />
+                    <PromptInputFooter>
+                      <div className="flex items-center gap-1">
+                        {/* Model Selector */}
+                        <ModelSelector open={modelSelectorOpen} onOpenChange={(open) => {
+                          setModelSelectorOpen(open);
+                          if (open) fetchModels();
+                        }}>
+                          <ModelSelectorTrigger>
+                            <Button
+                              variant="ghost"
+                              className="h-6 px-1.5 text-[11px] text-muted-foreground/60 hover:text-foreground cursor-pointer gap-1"
+                            >
+                              {(() => {
+                                const current = sessionStatus.model || '';
+                                const provider = current.split('/')[0];
+                                const logoProvider = PROVIDER_LOGO_MAP[provider];
+                                return (
+                                  <>
+                                    {logoProvider && <ModelSelectorLogo provider={logoProvider} className="size-3" />}
+                                    <span>{current.split('/').pop() || 'Select model'}</span>
+                                    <ChevronDown className="size-3 opacity-50" />
+                                  </>
+                                );
+                              })()}
+                            </Button>
+                          </ModelSelectorTrigger>
+                          <ModelSelectorContent title="Select a Model">
+                            <ModelSelectorInput placeholder="Search models..." />
+                            <ModelSelectorList>
+                              <ModelSelectorEmpty>No models found.</ModelSelectorEmpty>
+                              {Object.entries(
+                                availableModels.reduce<Record<string, string[]>>((groups, m) => {
+                                  const [provider] = m.split('/');
+                                  const key = provider || 'other';
+                                  if (!groups[key]) groups[key] = [];
+                                  groups[key].push(m);
+                                  return groups;
+                                }, {})
+                              ).map(([provider, models]) => (
+                                <ModelSelectorGroup key={provider} heading={displayProvider(provider)}>
+                                  {models.map((m) => {
+                                    const modelName = m.split('/').slice(1).join('/');
+                                    const logoProvider = PROVIDER_LOGO_MAP[provider];
+                                    const isCurrent = m === sessionStatus.model;
+                                    return (
+                                      <ModelSelectorItem
+                                        key={m}
+                                        value={m}
+                                        onSelect={() => handleModelSwitch(m)}
+                                        className={isCurrent ? 'bg-accent' : ''}
+                                      >
+                                        {logoProvider && <ModelSelectorLogo provider={logoProvider} className="size-4 mr-2" />}
+                                        <ModelSelectorName>{modelName}</ModelSelectorName>
+                                        {isCurrent && <span className="text-xs text-muted-foreground">current</span>}
+                                      </ModelSelectorItem>
+                                    );
+                                  })}
+                                </ModelSelectorGroup>
+                              ))}
+                            </ModelSelectorList>
+                          </ModelSelectorContent>
+                        </ModelSelector>
+
+                        {/* Context Usage */}
+                        {sessionStatus.active && (sessionStatus.prompt_tokens ?? 0) > 0 && (
+                          <Context
+                            usedTokens={sessionStatus.prompt_tokens ?? 0}
+                            maxTokens={sessionStatus.context_limit ?? 200000}
+                            modelId={sessionStatus.model?.replace('/', ':') ?? ''}
+                            usage={{
+                              inputTokens: sessionStatus.total_prompt_tokens ?? 0,
+                              outputTokens: sessionStatus.total_completion_tokens ?? 0,
+                              totalTokens: sessionStatus.total_tokens ?? 0,
+                              cachedInputTokens: sessionStatus.total_cached_tokens ?? 0,
+                              inputTokenDetails: { cacheReadTokens: sessionStatus.total_cached_tokens ?? 0, noCacheTokens: undefined, cacheWriteTokens: undefined },
+                              outputTokenDetails: { textTokens: undefined, reasoningTokens: undefined },
+                            }}
+                          >
+                            <ContextTrigger className="h-6 px-1.5 text-[11px] text-muted-foreground/60" />
+                            <ContextContent side="top" align="start">
+                              <ContextContentHeader />
+                              <ContextContentBody className="space-y-1">
+                                <ContextInputUsage />
+                                <ContextOutputUsage />
+                                <ContextCacheUsage />
+                              </ContextContentBody>
+                            </ContextContent>
+                          </Context>
+                        )}
+                      </div>
+                      <PromptInputSubmit
+                        className="cursor-pointer"
+                        disabled={!isStreaming && !input.trim()}
+                        status={isStopping ? "submitted" : isStreaming ? "streaming" : "ready"}
+                        onStop={() => {
+                          if (isStopping) return;
+                          setIsStopping(true);
+                          fetch(`${API_BASE}/api/command/stop`, {
+                            method: "POST",
+                            headers: authHeaders({ "Content-Type": "application/json" }),
+                            body: JSON.stringify({}),
+                          }).catch(() => {});
+                        }}
+                      />
+                    </PromptInputFooter>
+                  </PromptInput>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </TooltipProvider>

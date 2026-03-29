@@ -35,6 +35,7 @@ export type ToolPart = ToolUIPart | DynamicToolUIPart;
 export type ToolHeaderProps = {
   title?: string;
   className?: string;
+  actions?: ReactNode;
 } & (
   | { type: ToolUIPart["type"]; state: ToolUIPart["state"]; toolName?: never }
   | {
@@ -77,6 +78,7 @@ export const ToolHeader = ({
   type,
   state,
   toolName,
+  actions,
   ...props
 }: ToolHeaderProps) => {
   const derivedName =
@@ -95,7 +97,14 @@ export const ToolHeader = ({
         <span className="font-medium text-sm">{title ?? derivedName}</span>
         {getStatusBadge(state)}
       </div>
-      <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+      <div className="flex items-center gap-1.5">
+        {actions && (
+          <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            {actions}
+          </div>
+        )}
+        <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+      </div>
     </CollapsibleTrigger>
   );
 };
