@@ -50,6 +50,10 @@ MEMORY_MAX_INJECT_CHARS = 2000      # Max chars of memory to inject into system 
 # ── Session Persistence ──
 SESSIONS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "sessions")
 
+# ── Autonomous Sessions (trigger / scheduler subagent work) ──
+AUTO_SESSIONS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "autonomous_sessions")
+NOTIFICATIONS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "notifications.json")
+
 # ── Multi-Channel ──
 # Unified user identity — all authenticated channel users map to this ID.
 # This enables cross-channel session sharing (e.g., start on Desktop, continue on Telegram).

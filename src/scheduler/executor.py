@@ -1,6 +1,6 @@
 """
 Task executor — runs an independent Agent session for a scheduled task
-and sends the result back to the user via their original IM channel.
+and stores the result via NotificationStore.
 """
 
 import logging
@@ -14,7 +14,7 @@ def execute_task(task: dict):
     """Execute a scheduled task in a background thread.
 
     Creates a fresh Agent session, runs the task's prompt through agent_loop,
-    and pushes the result to the user via the registered channel.
+    and stores the result via NotificationStore (autonomous session + notification).
     """
     thread = threading.Thread(
         target=_run_task,
@@ -27,12 +27,14 @@ def execute_task(task: dict):
 
 def _run_task(task: dict):
     """Internal: run the task synchronously (called inside a thread)."""
+    import time
     from agent import agent_loop
     from prompt import make_system_prompt
     from llm import make_empty_token_stats
     from logger import create_log_file, log_event, close_log_file
     from channels.registry import get_channel
     from scheduler.store import update_task
+    from session import _serialize_history
 
     task_id = task["id"]
     task_name = task["task_name"]
@@ -42,28 +44,17 @@ def _run_task(task: dict):
 
     logger.info(f"Executing scheduled task: {task_id} ({task_name})")
 
-    # Find the channel to push results
+    # Notify user that a scheduled task is starting (best-effort)
     channel = get_channel(channel_name)
     if not channel:
-        # Original channel unavailable — try any registered channel
         from channels.registry import list_channels
         for fallback_name in list_channels():
             channel = get_channel(fallback_name)
             if channel:
-                logger.warning(
-                    f"Task {task_id}: channel '{channel_name}' unavailable, "
-                    f"falling back to '{fallback_name}'"
-                )
                 break
 
-    if not channel:
-        logger.error(f"No channels available to deliver result for task {task_id}")
-        update_task(task_id, last_run_at=datetime.now(timezone.utc).isoformat(),
-                    last_result=f"Error: no channels available")
-        return
-
-    # Notify user that a scheduled task is starting
-    channel.send_status(user_id, f"⏰ Scheduled task 「{task_name}」 is running...")
+    if channel:
+        channel.send_status(user_id, f"⏰ Scheduled task 「{task_name}」 is running...")
 
     # Create a fresh Agent session for this task
     log_file = create_log_file()
@@ -89,6 +80,7 @@ def _run_task(task: dict):
     ]
     token_stats = make_empty_token_stats()
 
+    start_time = time.time()
     try:
         # Collect events to extract final reply
         events = []
@@ -129,10 +121,24 @@ def _run_task(task: dict):
                 usage_line = evt.get("summary", "")
                 break
 
-        # Send result to user
-        header = f"📋 Scheduled Task 「{task_name}」 Result:\n\n"
-        footer = f"\n\n---\n{usage_line}" if usage_line else ""
-        channel.send_reply(user_id, header + final_reply + footer)
+        if usage_line:
+            final_reply += f"\n\n---\n{usage_line}"
+
+        duration = time.time() - start_time
+
+        # Store via NotificationStore
+        serialized = _serialize_history(updated_history)
+        _store_notification(
+            task_id=task_id,
+            task_name=task_name,
+            user_id=user_id,
+            body=final_reply,
+            history=serialized,
+            token_stats=dict(updated_stats),
+            system_prompt=system_prompt,
+            duration=duration,
+            channel_name=channel_name,
+        )
 
         # Update task record
         update_task(
@@ -151,7 +157,9 @@ def _run_task(task: dict):
     except Exception as e:
         error_msg = f"❌ Scheduled task 「{task_name}」 failed: {str(e)}"
         logger.error(error_msg, exc_info=True)
-        channel.send_reply(user_id, error_msg)
+        # Direct delivery for errors (NotificationStore might also be broken)
+        if channel:
+            channel.send_reply(user_id, error_msg)
         update_task(
             task_id,
             last_run_at=datetime.now(timezone.utc).isoformat(),
@@ -165,3 +173,48 @@ def _run_task(task: dict):
 
     finally:
         close_log_file(log_file)
+
+
+def _store_notification(
+    task_id: str,
+    task_name: str,
+    user_id: str,
+    body: str,
+    history: list,
+    token_stats: dict,
+    system_prompt: str,
+    duration: float,
+    channel_name: str,
+):
+    """Store scheduled task result via NotificationStore."""
+    try:
+        from notifications import notification_store
+        notification_store.create(
+            source_type="schedule",
+            source_id=task_id,
+            source_name=task_name,
+            body=body,
+            user_id=user_id,
+            history=history,
+            token_stats=token_stats,
+            agent_provider="self",
+            agent_duration_s=duration,
+            system_prompt=system_prompt,
+        )
+    except Exception as e:
+        logger.error("Failed to store notification for task %s: %s", task_id, e)
+        # Fallback: try direct channel delivery
+        try:
+            from channels.registry import get_channel, list_channels
+            channel = get_channel(channel_name)
+            if not channel:
+                for name in list_channels():
+                    channel = get_channel(name)
+                    if channel:
+                        break
+            if channel:
+                header = f"📋 Scheduled Task 「{task_name}」 Result:\n\n"
+                channel.send_reply(user_id, header + body)
+        except Exception as e2:
+            logger.error("Fallback delivery also failed: %s", e2)
+

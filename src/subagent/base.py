@@ -51,6 +51,32 @@ class SubagentProvider(ABC):
         """
         ...
 
+    def run_with_history(
+        self,
+        task: str,
+        system_prompt: str = "",
+        working_dir: str = "~",
+        model: str = "",
+        check_stop=None,
+        timeout: int = 300,
+    ) -> tuple[str, list, dict]:
+        """Execute a task and return (final_text, history, stats).
+
+        The history is a list of session-compatible message dicts
+        (role/content/tool_calls) suitable for saving as an autonomous session
+        or continuing a conversation.
+
+        Default implementation wraps run() with minimal history.
+        Subclasses can override to provide richer execution traces.
+        """
+        text = self.run(task, system_prompt, working_dir, model, check_stop, timeout)
+        history = [
+            {"role": "system", "content": system_prompt or "(default system prompt)"},
+            {"role": "user", "content": task},
+            {"role": "assistant", "content": text},
+        ]
+        return text, history, {}
+
     def is_available(self) -> bool:
         """Check if this provider is usable (installed, configured, etc.)."""
         return True

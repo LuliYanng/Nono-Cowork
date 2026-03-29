@@ -247,7 +247,7 @@ def _listener_loop():
 
 
 # ══════════════════════════════════════════════
-# Event processing — disposable agent session
+# Event processing — autonomous agent session
 # ══════════════════════════════════════════════
 
 SKIP_MARKER = "[SKIP]"
@@ -266,6 +266,9 @@ def _handle_trigger_event(data):
     Events are processed ONE AT A TIME (serialized via lock) to prevent
     multiple Gemini CLI processes from running simultaneously and
     causing OOM on memory-constrained servers.
+
+    Results are stored in the NotificationStore (autonomous session +
+    notification index) and distributed to channels.
     """
     # Acquire lock — if another event is being processed, this blocks
     with _processing_lock:
@@ -291,30 +294,36 @@ def _handle_trigger_event(data):
             agent_prompt = (recipe or {}).get("agent_prompt") or _DEFAULT_TRIGGER_PROMPT
             recipe_user_id = (recipe or {}).get("user_id") or user_id
 
-            # Process the event in a disposable agent session
-            result = _run_disposable_agent(agent_prompt, event_data, trigger_slug)
+            # Process the event via subagent with full history capture
+            result = _run_autonomous_agent(
+                agent_prompt, event_data, trigger_slug, trigger_id, recipe_user_id,
+                deliver_to_channels=(recipe or {}).get("channel_name"),
+            )
 
             if result is None:
                 logger.info("Trigger event skipped (slug=%s)", trigger_slug)
-                return
-
-            # Deliver result to user (use recipe's preferred channel)
-            preferred_ch = (recipe or {}).get("channel_name")
-            _deliver_to_user(recipe_user_id, result, preferred_channel=preferred_ch)
 
         except Exception as e:
             logger.error("Error handling trigger event: %s", e, exc_info=True)
 
 
-def _run_disposable_agent(agent_prompt: str, event_data, trigger_slug: str) -> str | None:
-    """Run a one-shot agent to process a trigger event via the subagent framework.
+def _run_autonomous_agent(
+    agent_prompt: str,
+    event_data,
+    trigger_slug: str,
+    trigger_id: str,
+    user_id: str,
+    deliver_to_channels: str = None,
+) -> str | None:
+    """Run a one-shot agent to process a trigger event.
 
-    Uses the subagent provider system (auto-selects gemini-cli > self agent_loop).
-    The session is fully disposable — no history is kept.
+    Uses run_with_history() to capture the full execution trace,
+    then stores everything via NotificationStore.
 
     Returns the agent's response, or None if the agent decided to skip.
     """
     from subagent import get_provider
+    from notifications import notification_store
 
     # Format event data as the task
     event_str = json.dumps(event_data, ensure_ascii=False, default=str)
@@ -326,61 +335,67 @@ def _run_disposable_agent(agent_prompt: str, event_data, trigger_slug: str) -> s
         f"```json\n{event_str}\n```"
     )
 
+    start_time = time.time()
     try:
-        # Force 'self' provider — Gemini CLI (Node.js) OOMs on low-memory servers.
-        # The self provider uses our Python agent_loop, which is lighter (~50MB)
-        # and more reliable for these short one-shot tasks.
-        provider = get_provider(name="self")
+        # Use gemini-cli for richer trigger processing (has full tool access).
+        # Note: gemini-cli (Node.js) uses more memory than 'self' provider.
+        # If OOM occurs on low-memory servers, switch back to name="self".
+        provider = get_provider(name="gemini-cli")
         logger.info(
             "Processing trigger %s via subagent provider: %s",
             trigger_slug, provider.name,
         )
-        result = provider.run(task=task, system_prompt=agent_prompt)
+        final_text, history, stats = provider.run_with_history(
+            task=task, system_prompt=agent_prompt,
+        )
     except Exception as e:
         logger.error("Subagent error for trigger %s: %s", trigger_slug, e)
         return None
 
+    duration = time.time() - start_time
+
     # Check for SKIP
-    if not result or SKIP_MARKER in result:
+    if not final_text or SKIP_MARKER in final_text:
         return None
 
-    return result
+    # Store in NotificationStore (autonomous session + notification + distribute)
+    deliver_to = [deliver_to_channels] if deliver_to_channels else None
+    try:
+        notification_store.create(
+            source_type="trigger",
+            source_id=trigger_id,
+            source_name=trigger_slug,
+            body=final_text,
+            user_id=user_id,
+            history=history,
+            token_stats=stats,
+            event_data=event_data if isinstance(event_data, dict) else {},
+            agent_provider=provider.name,
+            agent_duration_s=duration,
+            system_prompt=agent_prompt,
+            deliver_to=deliver_to,
+        )
+    except Exception as e:
+        logger.error("Failed to store notification for trigger %s: %s", trigger_slug, e)
+        # Fallback: try direct delivery if NotificationStore fails
+        _deliver_to_user_fallback(user_id, final_text)
+
+    return final_text
 
 
-def _deliver_to_user(user_id: str, message: str, preferred_channel: str = None):
-    """Send the processed trigger result directly to the user's IM channel.
-
-    Tries the preferred channel first (from trigger recipe), then falls back
-    to any available registered channel.
-    """
+def _deliver_to_user_fallback(user_id: str, message: str):
+    """Fallback delivery when NotificationStore fails. Tries any available channel."""
     try:
         from channels.registry import list_channels, get_channel
-
-        channel = None
-
-        # Try preferred channel first
-        if preferred_channel:
-            channel = get_channel(preferred_channel)
-
-        # Fallback: try any available channel
-        if not channel:
-            for name in list_channels():
-                channel = get_channel(name)
-                if channel:
-                    if preferred_channel:
-                        logger.warning(
-                            "Preferred channel '%s' unavailable, falling back to '%s'",
-                            preferred_channel, name,
-                        )
-                    break
-
-        if channel:
-            channel.send_reply(user_id, message)
-            logger.info("Trigger result delivered to %s via %s", user_id, channel.name)
-        else:
-            logger.warning("No IM channels registered. Cannot deliver trigger result.")
+        for name in list_channels():
+            channel = get_channel(name)
+            if channel:
+                channel.send_reply(user_id, message)
+                logger.info("Fallback delivery to %s via %s", user_id, name)
+                return
+        logger.warning("No channels available for fallback delivery.")
     except Exception as e:
-        logger.warning("Failed to deliver trigger result: %s", e)
+        logger.warning("Fallback delivery failed: %s", e)
 
 
 # ══════════════════════════════════════════════

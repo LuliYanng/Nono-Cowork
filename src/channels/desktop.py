@@ -485,6 +485,142 @@ async def command(cmd: str, request: Request):
     return {"result": "\n".join(responses)}
 
 
+# ── RESTful: Notifications ──
+
+@app.get("/api/notifications")
+async def list_notifications(
+    status: str = None, limit: int = 50, offset: int = 0
+):
+    """List notifications for the desktop user."""
+    from notifications import notification_store
+    notifs, total = notification_store.list(
+        DESKTOP_USER_ID, status=status, limit=limit, offset=offset,
+    )
+    unread = notification_store.unread_count(DESKTOP_USER_ID)
+    return {"notifications": notifs, "total": total, "unread": unread}
+
+
+@app.get("/api/notifications/unread-count")
+async def notifications_unread_count():
+    """Get the unread notification count (for badges)."""
+    from notifications import notification_store
+    return {"count": notification_store.unread_count(DESKTOP_USER_ID)}
+
+
+@app.get("/api/notifications/stream")
+async def notifications_stream():
+    """SSE stream for real-time notification push.
+
+    Unlike /api/chat SSE (per-request, closes on 'done'), this is a
+    persistent connection that stays open while the frontend is active.
+    New notifications are pushed as 'new_notification' events.
+    """
+    from notifications import notification_store
+
+    sub_queue = notification_store.subscribe(DESKTOP_USER_ID)
+
+    async def event_generator():
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        try:
+            while True:
+                try:
+                    event = await loop.run_in_executor(
+                        None, lambda: sub_queue.get(timeout=30)
+                    )
+                    yield {
+                        "event": "new_notification",
+                        "data": json.dumps(event, ensure_ascii=False),
+                    }
+                except queue.Empty:
+                    # Heartbeat to keep connection alive
+                    yield {"comment": "heartbeat"}
+        finally:
+            notification_store.unsubscribe(DESKTOP_USER_ID, sub_queue)
+
+    return EventSourceResponse(event_generator())
+
+
+@app.get("/api/notifications/{notification_id}")
+async def get_notification(notification_id: str):
+    """Get a single notification's details."""
+    from notifications import notification_store
+    notif = notification_store.get(notification_id)
+    if not notif:
+        return JSONResponse({"error": "Notification not found"}, status_code=404)
+    return notif
+
+
+@app.put("/api/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str):
+    """Mark a notification as read."""
+    from notifications import notification_store
+    ok = notification_store.mark_read(notification_id)
+    if not ok:
+        return JSONResponse({"error": "Notification not found"}, status_code=404)
+    return {"message": "Marked as read"}
+
+
+@app.put("/api/notifications/read-all")
+async def mark_all_notifications_read():
+    """Mark all notifications as read."""
+    from notifications import notification_store
+    count = notification_store.mark_all_read(DESKTOP_USER_ID)
+    return {"message": f"Marked {count} notifications as read", "count": count}
+
+
+@app.delete("/api/notifications/{notification_id}")
+async def delete_notification(notification_id: str):
+    """Delete a notification and its autonomous session."""
+    from notifications import notification_store
+    ok = notification_store.delete(notification_id)
+    if not ok:
+        return JSONResponse({"error": "Notification not found"}, status_code=404)
+    return {"message": "Notification deleted"}
+
+
+@app.get("/api/notifications/{notification_id}/session")
+async def get_notification_session(notification_id: str):
+    """Load the autonomous session associated with a notification.
+
+    Returns the full conversation history (session-compatible format)
+    for review or to continue chatting.
+    """
+    from notifications import notification_store
+    notif = notification_store.get(notification_id)
+    if not notif:
+        return JSONResponse({"error": "Notification not found"}, status_code=404)
+
+    session_id = notif.get("session_id")
+    if not session_id:
+        return JSONResponse({"error": "No session associated"}, status_code=404)
+
+    session_data = notification_store.load_session(session_id)
+    if not session_data:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+
+    # Filter out system prompt for display (like main session API)
+    display_messages = [
+        msg for msg in session_data.get("history", [])
+        if msg.get("role") != "system"
+    ]
+
+    # Auto-mark as read when session is loaded
+    notification_store.mark_read(notification_id)
+
+    return {
+        "id": session_data["id"],
+        "notification_id": notification_id,
+        "messages": display_messages,
+        "source": session_data.get("source", {}),
+        "token_stats": session_data.get("token_stats", {}),
+        "created_at": session_data.get("created_at"),
+        "last_active": session_data.get("last_active"),
+        "autonomous": True,
+    }
+
+
 # ── Entry point ──
 
 def main():
@@ -527,6 +663,8 @@ def main():
     print(f"     DELETE /api/sessions/:id             — delete session")
     print(f"     GET  /api/models                   — list models")
     print(f"     PUT  /api/models/current            — switch model")
+    print(f"     GET  /api/notifications             — notification list")
+    print(f"     GET  /api/notifications/stream      — SSE notification push")
     print(f"     GET  /api/health                   — health check")
     print(f"     POST /api/command/                 — slash command (IM compat)")
     print("=" * 50)
@@ -536,3 +674,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

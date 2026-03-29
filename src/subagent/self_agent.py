@@ -8,6 +8,7 @@ window so the main agent's conversation history is not affected.
 import os
 import logging
 from subagent.base import SubagentProvider
+from session import _serialize_history
 
 logger = logging.getLogger("subagent.self")
 
@@ -25,6 +26,15 @@ class SelfAgentProvider(SubagentProvider):
 
     def run(self, task: str, system_prompt: str = "", working_dir: str = "~",
             model: str = "", check_stop=None, timeout: int = 300) -> str:
+        text, _, _ = self.run_with_history(
+            task, system_prompt, working_dir, model, check_stop, timeout
+        )
+        return text
+
+    def run_with_history(self, task: str, system_prompt: str = "",
+                         working_dir: str = "~", model: str = "",
+                         check_stop=None, timeout: int = 300
+                         ) -> tuple[str, list, dict]:
         # Lazy import to avoid circular dependency (agent → tools → subagent → agent)
         from agent import agent_loop
         from config import COMPRESSION_MODEL
@@ -64,7 +74,13 @@ class SelfAgentProvider(SubagentProvider):
             stats.get("total_tokens", 0),
         )
 
-        return self._extract_reply(result_history, stats)
+        # Extract final text
+        text = self._extract_reply(result_history, stats)
+
+        # Serialize history for session-compatible storage
+        serialized = _serialize_history(result_history)
+
+        return text, serialized, dict(stats)
 
     @staticmethod
     def _extract_reply(history: list, stats: dict) -> str:
