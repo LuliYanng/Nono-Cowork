@@ -544,7 +544,7 @@ async def inject_mock_notifications():
                         "metadata": {
                             "to": "john.doe@example.com",
                             "subject": "Re: 询价邀请：2026年第三季度办公设备集中采购项目（华南区）",
-                            "body_preview": "张经理您好，感谢您的垂询，邮件及附件均已收到。我将在一个工作日内给您回复正式报价。",
+                            "body": "张经理您好，感谢您的垂询，邮件及附件均已收到。我将在一个工作日内给您回复正式报价。",
                             "draft_id": "draft_789",
                         },
                         "actions": [

@@ -260,17 +260,9 @@ function EmailDraftCard({
               <span className="text-muted-foreground/25">Subject:</span> {meta.subject}
             </p>
           )}
-          {meta.body_preview && (
-            <p
-              className="text-[11.5px] text-muted-foreground/35 leading-relaxed mt-1"
-              style={{
-                display: "-webkit-box",
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: "vertical",
-                overflow: "hidden",
-              }}
-            >
-              {meta.body_preview}
+          {(meta.body || meta.body_preview) && (
+            <p className="text-[11.5px] text-muted-foreground/35 leading-relaxed mt-1 whitespace-pre-wrap">
+              {meta.body || meta.body_preview}
             </p>
           )}
         </div>
