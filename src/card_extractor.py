@@ -31,62 +31,62 @@ REPORT_RESULT_TOOL = {
     "function": {
         "name": "report_result",
         "description": (
-            "在完成所有工作后调用此工具，向用户汇报你的工作结果。"
-            "这是你的最后一步操作。"
+            "Call this tool after completing all work to report your results "
+            "to the user. This should be your final action."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "summary": {
                     "type": "string",
-                    "description": "一句话摘要：发生了什么 + 你做了什么",
+                    "description": "One-line summary: what happened + what you did",
                 },
                 "deliverables": {
                     "type": "array",
-                    "description": "你产出的具体成果列表，每个都是用户可触达的东西",
+                    "description": "List of concrete outputs the user can act on",
                     "items": {
                         "type": "object",
                         "properties": {
                             "type": {
                                 "type": "string",
                                 "description": (
-                                    "交付物类型。常用: file, email_draft, report, link, data。"
-                                    "也可以用其他类型，前端会用通用卡片渲染"
+                                    "Deliverable type. Common: file, email_draft, report, link, data. "
+                                    "Custom types are also accepted; the frontend will render a generic card"
                                 ),
                             },
                             "label": {
                                 "type": "string",
-                                "description": "显示名称，如 '报价表模板.xlsx' 或 '回复草稿'",
+                                "description": "Display name, e.g. 'quote_template.xlsx' or 'Reply Draft'",
                             },
                             "description": {
                                 "type": "string",
-                                "description": "简短说明，如 '已保存到 Inbox/' 或 '已创建于 Gmail'",
+                                "description": "Short note, e.g. 'Saved to Inbox/' or 'Created in Gmail'",
                             },
                             "metadata": {
                                 "type": "object",
                                 "description": (
-                                    "类型特有的数据，任意 KV。"
-                                    "例如 email_draft: {to, subject, body_preview}; "
+                                    "Type-specific data, arbitrary key-value pairs. "
+                                    "e.g. email_draft: {to, subject, body_preview}; "
                                     "file: {path, size}; link: {url}"
                                 ),
                             },
                             "actions": {
                                 "type": "array",
-                                "description": "用户可以对这个交付物执行的操作",
+                                "description": "Actions the user can take on this deliverable",
                                 "items": {
                                     "type": "object",
                                     "properties": {
                                         "label": {
                                             "type": "string",
-                                            "description": "按钮文字，如 '发送' '打开文件'",
+                                            "description": "Button text, e.g. 'Send' or 'Open File'",
                                         },
                                         "action_type": {
                                             "type": "string",
-                                            "description": "操作类型: open_draft, open_file, send_email, link, dismiss",
+                                            "description": "Action type: open_draft, open_file, send_email, link, dismiss",
                                         },
                                         "primary": {
                                             "type": "boolean",
-                                            "description": "是否为主要操作（高亮按钮）",
+                                            "description": "Whether this is the primary action (highlighted button)",
                                         },
                                     },
                                 },
@@ -108,28 +108,28 @@ REPORT_RESULT_TOOL = {
 # ═══════════════════════════════════════════
 
 REPORT_RESULT_PROMPT = """
-完成所有工作后，在回复末尾输出一个结构化的 JSON 块来汇报你的工作结果：
+After completing all work, output a structured JSON block at the end of your reply to report your results:
 
 ```json
 {
-  "summary": "一句话摘要：发生了什么 + 你做了什么",
+  "summary": "One-line summary: what happened + what you did",
   "deliverables": [
     {
-      "type": "类型（常用: file, email_draft, report, link, data）",
-      "label": "显示名称",
-      "description": "简短说明",
-      "metadata": {"类型特有的数据，如 email 的 to/subject/body_preview，文件的 path 等"},
+      "type": "type (common: file, email_draft, report, link, data)",
+      "label": "display name",
+      "description": "short note",
+      "metadata": {"type-specific data, e.g. email: to/subject/body_preview, file: path, etc."},
       "actions": [
-        {"label": "按钮文字", "action_type": "open_file|open_draft|send_email|link", "primary": true}
+        {"label": "button text", "action_type": "open_file|open_draft|send_email|link", "primary": true}
       ]
     }
   ]
 }
 ```
 
-规则：
-- summary 必填，deliverables 可选（如果没有具体产出就不填）
-- 如果事件不值得通知（垃圾邮件、系统消息等），回复 [SKIP]
+Rules:
+- summary is required; deliverables is optional (omit if no concrete output)
+- If the event is not worth notifying (e.g. spam, system messages), reply with exactly [SKIP]
 """.strip()
 
 
