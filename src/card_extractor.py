@@ -108,17 +108,20 @@ REPORT_RESULT_TOOL = {
 # ═══════════════════════════════════════════
 
 REPORT_RESULT_PROMPT = """
-After completing all work, output a structured JSON block at the end of your reply to report your results:
+## IMPORTANT: Output Format (MANDATORY)
+
+You MUST end your final reply with a structured JSON block to report your results.
+Do NOT write a free-form summary — use ONLY this JSON format:
 
 ```json
 {
   "summary": "One-line summary: what happened + what you did",
   "deliverables": [
     {
-      "type": "type (common: file, email_draft, report, link, data)",
+      "type": "file|email_draft|report|link|data",
       "label": "display name",
       "description": "short note",
-      "metadata": {"type-specific data, e.g. email: to/subject/body_preview, file: path, etc."},
+      "metadata": {},
       "actions": [
         {"label": "button text", "action_type": "open_file|open_draft|send_email|link", "primary": true}
       ]
@@ -128,8 +131,10 @@ After completing all work, output a structured JSON block at the end of your rep
 ```
 
 Rules:
-- summary is required; deliverables is optional (omit if no concrete output)
-- If the event is not worth notifying (e.g. spam, system messages), reply with exactly [SKIP]
+- summary is REQUIRED — always include it
+- deliverables: list each concrete output (saved file, created draft, etc.) with its actions
+- If no concrete deliverables, just include summary with an empty deliverables array
+- If the event is not worth notifying (spam, system messages, etc.), reply ONLY with [SKIP]
 """.strip()
 
 

@@ -89,9 +89,6 @@ class SelfAgentProvider(SubagentProvider):
             role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
             content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
             if role == "assistant" and content:
-                tokens = stats.get("total_tokens", 0)
-                calls = stats.get("total_api_calls", 0)
-                content += f"\n\n---\n📊 Subagent usage: {tokens} tokens, {calls} API calls"
                 return content
 
         return "(Subagent completed but produced no text output)"
