@@ -202,6 +202,11 @@ class NotificationStore:
     ) -> dict:
         """Create a notification + save autonomous session + distribute.
 
+        The notification includes structured card data extracted from
+        agent output and tool call history:
+          - summary: Agent's understanding of the event (concise digest)
+          - deliverables: Concrete outputs with per-item actions and metadata
+
         Args:
             source_type: "trigger" | "schedule" | "syncthing"
             source_id: trigger_id, task_id, etc.
@@ -216,8 +221,16 @@ class NotificationStore:
             system_prompt: the system prompt used for the subagent
             deliver_to: channel names to push to; None = desktop only
         """
+        from card_extractor import extract_card_data
+
         title = generate_title(source_type, source_name, event_data)
         category = infer_category(source_type, source_name)
+
+        # Extract structured card data from agent's work
+        card = extract_card_data(
+            agent_output=body,
+            history=history,
+        )
 
         # 1. Save autonomous session
         session_id = f"auto_{time.strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(2)}"
@@ -248,7 +261,7 @@ class NotificationStore:
         }
         self._save_session(session_id, session_data)
 
-        # 2. Create notification index entry
+        # 2. Create notification index entry (with card data)
         now = datetime.now(timezone.utc).isoformat()
         notification = {
             "id": notification_id,
@@ -257,9 +270,14 @@ class NotificationStore:
             "source_id": source_id,
             "source_name": source_name,
             "title": title,
-            "preview": body[:200] if body else "",
             "category": category,
             "status": "unread",
+
+            # ── Card data ──
+            "summary": card["summary"],
+            "deliverables": card["deliverables"],
+
+            # ── Metadata ──
             "agent_provider": agent_provider,
             "agent_duration_s": round(agent_duration_s, 1),
             "agent_tokens": (token_stats or {}).get("total_tokens", 0),
@@ -274,12 +292,25 @@ class NotificationStore:
         self._distribute(notification, body, deliver_to)
 
         logger.info(
-            "Notification created: %s [%s] session=%s",
+            "Notification created: %s [%s] session=%s deliverables=%d",
             notification_id, title, session_id,
+            len(card["deliverables"]),
         )
         return notification
 
     # ── Query ──
+
+    @staticmethod
+    def _migrate_notification(n: dict) -> dict:
+        """Backfill old notifications missing card fields.
+
+        Old schema had 'preview'; new schema has 'summary' + 'deliverables'.
+        """
+        if "summary" not in n:
+            n["summary"] = n.get("preview", "")
+        if "deliverables" not in n:
+            n["deliverables"] = []
+        return n
 
     def list(self, user_id: str, status: str = None,
              limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
@@ -295,14 +326,14 @@ class NotificationStore:
             user_notifs = [n for n in user_notifs if n.get("status") == status]
         total = len(user_notifs)
         # Paginate (already newest-first from storage)
-        page = user_notifs[offset:offset + limit]
+        page = [self._migrate_notification(n) for n in user_notifs[offset:offset + limit]]
         return page, total
 
     def get(self, notification_id: str) -> dict | None:
         """Get a single notification by ID."""
         for n in self._load_notifications():
             if n["id"] == notification_id:
-                return n
+                return self._migrate_notification(n)
         return None
 
     def unread_count(self, user_id: str) -> int:
@@ -463,16 +494,19 @@ class NotificationStore:
         _pubsub.publish(user_id, {
             "id": notification["id"],
             "title": notification["title"],
-            "preview": notification["preview"],
+            "summary": notification["summary"],
+            "deliverables": notification["deliverables"],
             "category": notification["category"],
             "source_type": notification["source_type"],
             "source_name": notification["source_name"],
             "created_at": notification["created_at"],
             "session_id": notification["session_id"],
+            "agent_provider": notification["agent_provider"],
+            "agent_duration_s": notification["agent_duration_s"],
         })
         notification["delivered_channels"].append("desktop")
 
-        # Optional: push to IM channels
+        # Optional: push to IM channels (summary only — they can't render cards)
         if deliver_to:
             from channels.registry import get_channel
             for ch_name in deliver_to:
@@ -481,8 +515,9 @@ class NotificationStore:
                 channel = get_channel(ch_name)
                 if channel:
                     try:
-                        preview_text = f"🔔 {notification['title']}\n\n{body[:500]}"
-                        channel.send_reply(user_id, preview_text)
+                        # IM gets title + summary, not the full body
+                        im_text = f"🔔 {notification['title']}\n\n{notification['summary'][:500]}"
+                        channel.send_reply(user_id, im_text)
                         notification["delivered_channels"].append(ch_name)
                     except Exception as e:
                         logger.warning("Failed to deliver to %s: %s", ch_name, e)

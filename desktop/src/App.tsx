@@ -475,7 +475,7 @@ function App() {
       const res = await fetch(`${API_BASE}/api/notifications`, { headers: authHeaders() });
       const data = await res.json();
       setNotifications(data.notifications || []);
-      setUnreadCount(data.unread_count ?? 0);
+      setUnreadCount(data.unread ?? data.unread_count ?? 0);
     } catch {
       // ignore
     }

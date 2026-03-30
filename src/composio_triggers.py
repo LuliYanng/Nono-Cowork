@@ -254,10 +254,22 @@ SKIP_MARKER = "[SKIP]"
 
 # Default system prompt for triggers without a custom agent_prompt
 _DEFAULT_TRIGGER_PROMPT = (
-    "You received a trigger event from an external service. "
-    "Summarize the event concisely and notify the user. "
-    "If the event is trivial or not worth notifying, respond with exactly [SKIP]."
+    "You are an autonomous agent processing a trigger event.\n"
+    "Your task is to understand the event, take appropriate action if possible, "
+    "and provide a concise report.\n\n"
+    "Be concise. The user wants to quickly understand the situation, "
+    "not read a verbose report.\n\n"
 )
+
+# Lazily build the full prompt (includes REPORT_RESULT_PROMPT from card_extractor)
+_full_trigger_prompt: str | None = None
+
+def _get_trigger_prompt() -> str:
+    global _full_trigger_prompt
+    if _full_trigger_prompt is None:
+        from card_extractor import REPORT_RESULT_PROMPT
+        _full_trigger_prompt = _DEFAULT_TRIGGER_PROMPT + REPORT_RESULT_PROMPT
+    return _full_trigger_prompt
 
 
 def _handle_trigger_event(data):
@@ -291,7 +303,7 @@ def _handle_trigger_event(data):
 
             # Look up the trigger recipe (agent_prompt)
             recipe = _find_recipe_by_trigger_id(trigger_id) or _find_recipe_by_slug(trigger_slug)
-            agent_prompt = (recipe or {}).get("agent_prompt") or _DEFAULT_TRIGGER_PROMPT
+            agent_prompt = (recipe or {}).get("agent_prompt") or _get_trigger_prompt()
             recipe_user_id = (recipe or {}).get("user_id") or user_id
 
             # Process the event via subagent with full history capture
@@ -462,7 +474,7 @@ def create_trigger(trigger_slug: str, agent_prompt: str = None,
         recipes[trigger_id] = {
             "trigger_id": trigger_id,
             "trigger_slug": trigger_slug,
-            "agent_prompt": agent_prompt or _DEFAULT_TRIGGER_PROMPT,
+            "agent_prompt": agent_prompt or _get_trigger_prompt(),
             "trigger_config": trigger_config,
             "user_id": current_user_id,
             "channel_name": ctx.get("channel_name", ""),

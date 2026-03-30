@@ -487,6 +487,140 @@ async def command(cmd: str, request: Request):
 
 # ── RESTful: Notifications ──
 
+@app.post("/api/notifications/mock")
+async def inject_mock_notifications():
+    """DEV ONLY: inject sample notifications for UI development."""
+    import json as _json
+    from notifications import notification_store
+
+    # Helper: build a report_result tool call message
+    def _report_call(call_id: str, card: dict):
+        return {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": "report_result",
+                    "arguments": _json.dumps(card, ensure_ascii=False),
+                },
+            }],
+        }
+
+    # ── Mock 1: Email with full deliverables ──
+    notification_store.create(
+        source_type="trigger",
+        source_id="ti_mock_gmail",
+        source_name="GMAIL_NEW_GMAIL_MESSAGE",
+        body="John Doe 发来了华南区 Q3 办公设备集中采购项目的询价邀请。已下载附件并创建回复草稿。",
+        user_id=DESKTOP_USER_ID,
+        history=[
+            {"role": "user", "content": "[Trigger Event] 新邮件来自 John Doe，主题：询价邀请..."},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "GMAIL_GET_ATTACHMENT", "arguments": '{"message_id":"msg_123"}'}}
+            ]},
+            {"role": "tool", "content": '{"file_path":"SyncFromLocal/Inbox/报价表模板.xlsx"}', "tool_call_id": "c1"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "c2", "type": "function", "function": {"name": "GMAIL_CREATE_EMAIL_DRAFT", "arguments": '{"to":"john@example.com","subject":"Re: 询价邀请"}'}}
+            ]},
+            {"role": "tool", "content": '{"id":"draft_789"}', "tool_call_id": "c2"},
+            _report_call("c3", {
+                "summary": "John Doe 发来了华南区 Q3 办公设备集中采购项目的询价邀请，附件是报价表模板，要求在 4 月 15 日前回复报价。已下载附件并创建 Gmail 回复草稿。",
+                "deliverables": [
+                    {
+                        "type": "file",
+                        "label": "报价表模板.xlsx",
+                        "description": "附件已下载到 SyncFromLocal/Inbox/",
+                        "metadata": {"path": "SyncFromLocal/Inbox/报价表模板.xlsx", "size": "24.5 KB"},
+                        "actions": [
+                            {"label": "打开文件", "action_type": "open_file", "primary": False},
+                        ],
+                    },
+                    {
+                        "type": "email_draft",
+                        "label": "回复草稿",
+                        "description": "已创建于 Gmail",
+                        "metadata": {
+                            "to": "john.doe@example.com",
+                            "subject": "Re: 询价邀请：2026年第三季度办公设备集中采购项目（华南区）",
+                            "body_preview": "张经理您好，感谢您的垂询，邮件及附件均已收到。我将在一个工作日内给您回复正式报价。",
+                            "draft_id": "draft_789",
+                        },
+                        "actions": [
+                            {"label": "审核并发送", "action_type": "open_draft", "primary": True},
+                            {"label": "编辑草稿", "action_type": "open_draft", "primary": False},
+                        ],
+                    },
+                ],
+            }),
+            {"role": "tool", "content": '{"status":"reported"}', "tool_call_id": "c3"},
+        ],
+        event_data={
+            "sender": "John Doe <john.doe@example.com>",
+            "subject": "询价邀请：2026年第三季度办公设备集中采购项目（华南区）",
+        },
+        agent_provider="gemini-cli",
+        agent_duration_s=42.3,
+        token_stats={"total_tokens": 8500},
+    )
+
+    # ── Mock 2: Schedule — daily report ──
+    notification_store.create(
+        source_type="schedule",
+        source_id="task_daily_report",
+        source_name="每日工作汇总",
+        body="今日共处理 12 封邮件，3 个文件变更。日报已生成。",
+        user_id=DESKTOP_USER_ID,
+        history=[
+            {"role": "user", "content": "[Scheduled Task] 生成每日工作汇总报告"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "c4", "type": "function", "function": {"name": "write_file", "arguments": '{"path":"Reports/2026-03-30.md"}'}}
+            ]},
+            {"role": "tool", "content": '{"success":true}', "tool_call_id": "c4"},
+            _report_call("c5", {
+                "summary": "今日共处理 12 封邮件，3 个文件变更，有 2 封邮件需要跟进回复。日报已生成。",
+                "deliverables": [
+                    {
+                        "type": "report",
+                        "label": "每日工作汇总 2026-03-30",
+                        "description": "已生成到 Reports/2026-03-30.md",
+                        "metadata": {"path": "Reports/2026-03-30.md"},
+                        "actions": [
+                            {"label": "查看报告", "action_type": "open_file", "primary": True},
+                        ],
+                    },
+                ],
+            }),
+            {"role": "tool", "content": '{"status":"reported"}', "tool_call_id": "c5"},
+        ],
+        agent_provider="self",
+        agent_duration_s=15.8,
+        token_stats={"total_tokens": 3200},
+    )
+
+    # ── Mock 3: Syncthing file change — info only, no deliverables ──
+    notification_store.create(
+        source_type="syncthing",
+        source_id="evt_sync_123",
+        source_name="File Sync",
+        body="检测到 proposal_v2.docx 更新，增加了第3章，修改了交付时间线。",
+        user_id=DESKTOP_USER_ID,
+        history=[
+            {"role": "user", "content": "[Syncthing Event] proposal_v2.docx updated"},
+            _report_call("c6", {
+                "summary": "检测到 proposal_v2.docx 更新，相比 v1 增加了第3章定价策略，修改了第2章交付时间线从6周改为8周。无需操作。",
+            }),
+            {"role": "tool", "content": '{"status":"reported"}', "tool_call_id": "c6"},
+        ],
+        event_data={"action": "updated", "path": "Documents/proposal_v2.docx"},
+        agent_provider="gemini-cli",
+        agent_duration_s=8.2,
+        token_stats={"total_tokens": 1500},
+    )
+
+    return {"ok": True, "injected": 3, "message": "3 mock notifications created"}
+
 @app.get("/api/notifications")
 async def list_notifications(
     status: str = None, limit: int = 50, offset: int = 0
