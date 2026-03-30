@@ -3,16 +3,16 @@ import {
   Plus,
   PanelLeftClose,
   Settings,
-  MessageSquare,
   Clock,
   Trash2,
   ChevronRight,
   Zap,
+  Repeat,
 } from "lucide-react";
 
 // ── Types ──
 
-export type SidebarView = "chat" | "workspace";
+export type SidebarView = "chat" | "workspace" | "routines";
 
 export interface SessionItem {
   id: string;
@@ -126,7 +126,7 @@ export function Sidebar({
         {/* Navigation items */}
         <div
           className="flex flex-col flex-1 overflow-y-auto"
-          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+          style={{ WebkitAppRegion: "no-drag", scrollbarGutter: "stable" } as React.CSSProperties}
         >
           {/* ── Workspace — page navigation ── */}
           <div className="px-3">
@@ -145,6 +145,21 @@ export function Sidebar({
                   {unreadCount}
                 </span>
               )}
+            </button>
+          </div>
+
+          {/* ── Routines — page navigation ── */}
+          <div className="px-3 mt-1">
+            <button
+              onClick={() => onViewChange("routines")}
+              className={`flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-[13px] transition-colors ${
+                activeView === "routines"
+                  ? "bg-sidebar-accent text-sidebar-foreground/90"
+                  : "text-sidebar-foreground/55 hover:bg-sidebar-accent hover:text-sidebar-foreground/80"
+              }`}
+            >
+              <Repeat size={16} strokeWidth={1.5} />
+              <span>Routines</span>
             </button>
           </div>
 
@@ -171,22 +186,21 @@ export function Sidebar({
 
             {/* Expandable session list */}
             {historyExpanded && (
-              <div className="px-2 py-0.5">
+              <div className="flex flex-col mb-1.5 mt-0.5">
                 {sessions.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center text-sidebar-foreground/25 gap-2 py-8">
-                    <MessageSquare size={24} strokeWidth={1.2} />
-                    <p className="text-xs">No conversations yet</p>
+                  <div className="flex flex-col text-sidebar-foreground/30 gap-1 py-4 ml-6">
+                    <p className="text-[12px]">No history</p>
                   </div>
                 ) : (
                   grouped.map(([group, items]) => (
-                    <div key={group} className="mb-1.5">
-                      <div className="px-2 py-1.5 text-[11px] font-medium text-sidebar-foreground/35 uppercase tracking-wider">
+                    <div key={group} className="mb-2 last:mb-0 flex flex-col gap-0.5">
+                      <div className="ml-6 py-1 text-[10px] font-semibold text-sidebar-foreground/35 uppercase tracking-wider">
                         {group}
                       </div>
                       {items.map((s) => (
                         <div
                           key={s.id}
-                          className="relative"
+                          className="relative ml-5 mr-3"
                           onMouseEnter={() => setHoveredId(s.id)}
                           onMouseLeave={() => setHoveredId(null)}
                         >
@@ -195,7 +209,7 @@ export function Sidebar({
                               if (!s.is_current) onSelectSession(s.id);
                               onViewChange("chat");
                             }}
-                            className={`w-full text-left px-3 py-1.5 rounded-lg text-[13px] truncate transition-colors mb-0.5 pr-8 ${
+                            className={`w-full text-left px-3 py-1.5 rounded-lg text-[13px] truncate transition-colors pr-8 ${
                               s.is_current && activeView === "chat"
                                 ? "bg-sidebar-accent text-sidebar-foreground/90"
                                 : "text-sidebar-foreground/55 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80"

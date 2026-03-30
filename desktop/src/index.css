@@ -120,11 +120,37 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
   body {
     @apply bg-background text-foreground;
-    }
+  }
   html {
     @apply font-sans;
-    }
+  }
+}
+
+/* Custom WebKit Scrollbar */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--foreground) 20%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--foreground) 40%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 9999px;
 }

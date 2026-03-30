@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { EmailDraftAction } from "./actions";
 import {
   Mail,
   Clock as ClockIcon,
@@ -16,7 +17,6 @@ import {
   FileEdit,
   CheckCircle2,
   Loader2,
-  ArrowRight,
 } from "lucide-react";
 
 // ═══════════════════════════════════════════
@@ -34,7 +34,6 @@ export interface Deliverable {
   label: string;
   description?: string;
   metadata?: Record<string, unknown>;
-  actions?: DeliverableAction[];
 }
 
 export interface Notification {
@@ -86,13 +85,7 @@ const DELIVERABLE_ICONS: Record<string, typeof Paperclip> = {
   link: ExternalLink,
 };
 
-const ACTION_ICONS: Record<string, typeof Send> = {
-  open_draft: Send,
-  open_file: ExternalLink,
-  send_email: Send,
-  link: ExternalLink,
-  continue_chat: MessageSquare,
-};
+// Action icons removed — each specialized component hardcodes its own buttons
 
 function SourceIcon({ notification }: { notification: Notification }) {
   const Icon =
@@ -138,14 +131,11 @@ function cleanTitle(title: string): string {
 function GenericDeliverableCard({
   deliverable,
   isUnread,
-  onAction,
 }: {
   deliverable: Deliverable;
   isUnread: boolean;
-  onAction?: (action: DeliverableAction) => void;
 }) {
   const DelivIcon = DELIVERABLE_ICONS[deliverable.type] || CheckCircle2;
-  const actions = deliverable.actions || [];
 
   return (
     <div
@@ -176,131 +166,11 @@ function GenericDeliverableCard({
           </>
         )}
       </div>
-
-      {/* Per-deliverable actions */}
-      {actions.length > 0 && (
-        <div className="flex items-center gap-1.5 mt-2 pl-[22px]">
-          {actions.map((action, i) => {
-            const ActionIcon = ACTION_ICONS[action.action_type] || ArrowRight;
-            return (
-              <button
-                key={i}
-                onClick={() => onAction?.(action)}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-colors ${
-                  action.primary
-                    ? "bg-foreground/[0.06] text-foreground/70 hover:bg-foreground/[0.10] hover:text-foreground/90"
-                    : "text-muted-foreground/40 hover:text-foreground/60 hover:bg-muted/30"
-                }`}
-              >
-                <ActionIcon size={11} />
-                <span>{action.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }
 
-// ═══════════════════════════════════════════
-//  Email Draft Card (specialized)
-// ═══════════════════════════════════════════
-
-function EmailDraftCard({
-  deliverable,
-  isUnread,
-  onAction,
-}: {
-  deliverable: Deliverable;
-  isUnread: boolean;
-  onAction?: (action: DeliverableAction) => void;
-}) {
-  const meta = (deliverable.metadata || {}) as Record<string, string>;
-  const actions = deliverable.actions || [];
-
-  return (
-    <div
-      className={`rounded-lg border px-3 py-2.5 transition-colors ${
-        isUnread
-          ? "bg-muted/20 border-border/40"
-          : "bg-muted/10 border-border/15"
-      }`}
-    >
-      {/* Header */}
-      <div className="flex items-center gap-2 text-[13px]">
-        <span className="shrink-0 text-blue-500/60">
-          <FileEdit size={14} strokeWidth={1.6} />
-        </span>
-        <span
-          className={`font-medium ${isUnread ? "text-foreground/75" : "text-foreground/50"}`}
-        >
-          {deliverable.label}
-        </span>
-        {deliverable.description && (
-          <>
-            <span className="text-muted-foreground/20">—</span>
-            <span className="text-muted-foreground/40 text-[12px]">
-              {deliverable.description}
-            </span>
-          </>
-        )}
-      </div>
-
-      {/* Email metadata */}
-      {(meta.to || meta.subject) && (
-        <div className="mt-1.5 pl-[22px] space-y-0.5">
-          {meta.to && (
-            <p className="text-[11.5px] text-muted-foreground/40">
-              <span className="text-muted-foreground/25">To:</span> {meta.to}
-            </p>
-          )}
-          {meta.subject && (
-            <p className="text-[11.5px] text-muted-foreground/40 truncate">
-              <span className="text-muted-foreground/25">Subject:</span> {meta.subject}
-            </p>
-          )}
-          {meta.body_preview && (
-            <p
-              className="text-[11.5px] text-muted-foreground/35 leading-relaxed mt-1"
-              style={{
-                display: "-webkit-box",
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: "vertical",
-                overflow: "hidden",
-              }}
-            >
-              {meta.body_preview}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Actions */}
-      {actions.length > 0 && (
-        <div className="flex items-center gap-1.5 mt-2 pl-[22px]">
-          {actions.map((action, i) => {
-            const ActionIcon = ACTION_ICONS[action.action_type] || ArrowRight;
-            return (
-              <button
-                key={i}
-                onClick={() => onAction?.(action)}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-colors ${
-                  action.primary
-                    ? "bg-blue-500/10 text-blue-600/80 hover:bg-blue-500/15 hover:text-blue-700"
-                    : "text-muted-foreground/40 hover:text-foreground/60 hover:bg-muted/30"
-                }`}
-              >
-                <ActionIcon size={11} />
-                <span>{action.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
+// EmailDraftCard removed — replaced by actions/EmailDraftAction
 
 // ═══════════════════════════════════════════
 //  Deliverable renderer (type router)
@@ -309,18 +179,16 @@ function EmailDraftCard({
 function DeliverableCard({
   deliverable,
   isUnread,
-  onAction,
 }: {
   deliverable: Deliverable;
   isUnread: boolean;
-  onAction?: (action: DeliverableAction) => void;
 }) {
-  // Route to specialized component if available
+  // Route to specialized action component if available
   switch (deliverable.type) {
     case "email_draft":
-      return <EmailDraftCard deliverable={deliverable} isUnread={isUnread} onAction={onAction} />;
+      return <EmailDraftAction deliverable={deliverable} isUnread={isUnread} />;
     default:
-      return <GenericDeliverableCard deliverable={deliverable} isUnread={isUnread} onAction={onAction} />;
+      return <GenericDeliverableCard deliverable={deliverable} isUnread={isUnread} />;
   }
 }
 
@@ -331,14 +199,12 @@ function DeliverableCard({
 interface NotificationCardProps {
   notification: Notification;
   onOpenSession?: (notification: Notification) => void;
-  onDeliverableAction?: (notification: Notification, action: DeliverableAction) => void;
   onLoadDetail?: (notification: Notification) => void;
 }
 
 export function NotificationCard({
   notification,
   onOpenSession,
-  onDeliverableAction,
   onLoadDetail,
 }: NotificationCardProps) {
   const [processExpanded, setProcessExpanded] = useState(false);
@@ -416,7 +282,6 @@ export function NotificationCard({
               key={i}
               deliverable={d}
               isUnread={isUnread}
-              onAction={(action) => onDeliverableAction?.(notification, action)}
             />
           ))}
         </div>

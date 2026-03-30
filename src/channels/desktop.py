@@ -544,12 +544,21 @@ async def inject_mock_notifications():
                         "metadata": {
                             "to": "john.doe@example.com",
                             "subject": "Re: 询价邀请：2026年第三季度办公设备集中采购项目（华南区）",
-                            "body_preview": "张经理您好，感谢您的垂询，邮件及附件均已收到。我将在一个工作日内给您回复正式报价。",
+                            "body": (
+                                "张伟先生：\n\n"
+                                "您好！\n\n"
+                                "感谢您对我们公司的信任与关注。我是陆莉，已收到您关于2026年第三季度华南区办公设备集中采购项目的询价邀请及附件中的需求明细。\n\n"
+                                "关于您提到的员工人体工学椅（150把）和4K会议室投影仪（5台）的需求，"
+                                "我们的团队正在根据您的规格要求进行评估。"
+                                "我们将在一周内为您提供一份详细的阶梯报价单，并明确预计的交货周期及售后服务条款。\n\n"
+                                "如有任何补充要求，请随时联系。\n\n"
+                                "顺颂商祺！"
+                            ),
+                            "body_preview": "张伟先生：您好！感谢您对我们公司的信任与关注...",
                             "draft_id": "draft_789",
                         },
                         "actions": [
-                            {"label": "审核并发送", "action_type": "open_draft", "primary": True},
-                            {"label": "编辑草稿", "action_type": "open_draft", "primary": False},
+                            {"label": "发送", "action_type": "send_email", "primary": True},
                         ],
                     },
                 ],
