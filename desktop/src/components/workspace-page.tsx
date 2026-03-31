@@ -12,6 +12,8 @@ interface WorkspacePageProps {
   unreadCount: number;
   onNotificationClick?: (notification: Notification) => void;
   onOpenSession?: (notification: Notification) => void;
+  onArchive?: (notification: Notification) => void;
+  onExecuteAction?: (notificationId: string, actionType: string, deliverableIndex: number) => Promise<boolean>;
   onLoadDetail?: (notification: Notification) => void;
   onMarkAllRead?: () => void;
 }
@@ -23,6 +25,8 @@ export function WorkspacePage({
   unreadCount,
   onNotificationClick,
   onOpenSession,
+  onArchive,
+  onExecuteAction,
   onLoadDetail,
   onMarkAllRead,
 }: WorkspacePageProps) {
@@ -75,6 +79,8 @@ export function WorkspacePage({
                   onNotificationClick?.(notif);
                   onOpenSession?.(notif);
                 }}
+                onArchive={onArchive}
+                onExecuteAction={onExecuteAction}
                 onLoadDetail={onLoadDetail}
               />
             ))

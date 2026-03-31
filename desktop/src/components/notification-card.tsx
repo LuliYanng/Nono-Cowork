@@ -17,6 +17,7 @@ import {
   FileEdit,
   CheckCircle2,
   Loader2,
+  Archive,
 } from "lucide-react";
 
 // ═══════════════════════════════════════════
@@ -44,7 +45,7 @@ export interface Notification {
   source_name: string;
   title: string;
   category: string;
-  status: "unread" | "read" | "dismissed";
+  status: "unread" | "read" | "dismissed" | "archived";
   summary: string;
   deliverables: Deliverable[];
   agent_provider: string;
@@ -179,14 +180,22 @@ function GenericDeliverableCard({
 function DeliverableCard({
   deliverable,
   isUnread,
+  onExecuteAction,
 }: {
   deliverable: Deliverable;
   isUnread: boolean;
+  onExecuteAction?: (actionType: string) => Promise<boolean>;
 }) {
   // Route to specialized action component if available
   switch (deliverable.type) {
     case "email_draft":
-      return <EmailDraftAction deliverable={deliverable} isUnread={isUnread} />;
+      return (
+        <EmailDraftAction
+          deliverable={deliverable}
+          isUnread={isUnread}
+          onExecuteAction={onExecuteAction}
+        />
+      );
     default:
       return <GenericDeliverableCard deliverable={deliverable} isUnread={isUnread} />;
   }
@@ -199,12 +208,16 @@ function DeliverableCard({
 interface NotificationCardProps {
   notification: Notification;
   onOpenSession?: (notification: Notification) => void;
+  onArchive?: (notification: Notification) => void;
+  onExecuteAction?: (notificationId: string, actionType: string, deliverableIndex: number) => Promise<boolean>;
   onLoadDetail?: (notification: Notification) => void;
 }
 
 export function NotificationCard({
   notification,
   onOpenSession,
+  onArchive,
+  onExecuteAction,
   onLoadDetail,
 }: NotificationCardProps) {
   const [processExpanded, setProcessExpanded] = useState(false);
@@ -282,12 +295,17 @@ export function NotificationCard({
               key={i}
               deliverable={d}
               isUnread={isUnread}
+              onExecuteAction={
+                onExecuteAction
+                  ? (actionType: string) => onExecuteAction(notification.id, actionType, i)
+                  : undefined
+              }
             />
           ))}
         </div>
       )}
 
-      {/* ── Footer: continue chat + agent process ── */}
+      {/* ── Footer: continue chat + archive + agent process ── */}
       <div className="flex items-center gap-1 px-3 pb-3 border-t border-border/10 pt-2 mx-1">
         {/* Continue chat — always available */}
         {onOpenSession && notification.session_id && (
@@ -303,6 +321,17 @@ export function NotificationCard({
         )}
 
         <div className="flex-1" />
+
+        {/* Archive — universal lifecycle action */}
+        {notification.status !== "archived" && (
+          <button
+            onClick={() => onArchive?.(notification)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11.5px] font-medium text-muted-foreground/30 hover:text-foreground/55 hover:bg-muted/30 transition-colors"
+          >
+            <Archive size={12} />
+            <span>归档</span>
+          </button>
+        )}
 
         {/* Agent process toggle */}
         <button

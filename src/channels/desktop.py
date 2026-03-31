@@ -714,6 +714,105 @@ async def delete_notification(notification_id: str):
     return {"message": "Notification deleted"}
 
 
+@app.post("/api/notifications/{notification_id}/action")
+async def execute_notification_action(notification_id: str, request: Request):
+    """Execute a user-approved action on a notification deliverable.
+
+    This is the human-in-the-loop endpoint: the agent prepares content,
+    and the user approves execution (send email, save draft, archive, etc.)
+
+    Body: { action_type: "send_email" | "save_draft" | "archive",
+            deliverable_index: 0 }
+    """
+    import json as _json
+    from datetime import datetime, timezone
+    from notifications import notification_store
+
+    body = await request.json()
+    action_type = body.get("action_type")
+    deliverable_index = body.get("deliverable_index", 0)
+
+    if not action_type:
+        return JSONResponse({"error": "action_type is required"}, status_code=400)
+
+    # ── Archive: no external API call needed ──
+    if action_type == "archive":
+        ok = notification_store.archive(notification_id)
+        if not ok:
+            return JSONResponse({"error": "Notification not found"}, status_code=404)
+        return {"message": "Notification archived", "status": "archived"}
+
+    # ── Action-based: need notification + deliverable ──
+    notif = notification_store.get(notification_id)
+    if not notif:
+        return JSONResponse({"error": "Notification not found"}, status_code=404)
+
+    deliverables = notif.get("deliverables", [])
+    if deliverable_index >= len(deliverables):
+        return JSONResponse({"error": "Deliverable not found"}, status_code=404)
+
+    deliverable = deliverables[deliverable_index]
+    meta = deliverable.get("metadata", {})
+
+    # Check Composio is available
+    from tools import composio_tools
+    if not composio_tools.is_enabled():
+        return JSONResponse(
+            {"error": "Composio is not enabled. Set COMPOSIO_API_KEY."},
+            status_code=503,
+        )
+
+    # ── Send Email via Composio ──
+    if action_type == "send_email":
+        to = meta.get("to", "")
+        if not to:
+            return JSONResponse({"error": "No recipient (to) in deliverable metadata"}, status_code=400)
+
+        result_str = composio_tools.execute("GMAIL_SEND_EMAIL", {
+            "recipient_email": to,
+            "subject": meta.get("subject", ""),
+            "body": meta.get("body", ""),
+            "user_id": "me",
+        })
+        result_data = _json.loads(result_str)
+
+        if result_data.get("successful") or (result_data.get("data") or {}).get("successful"):
+            # Mark notification as resolved
+            notification_store._update_status(
+                notification_id, "resolved",
+                resolved_at=datetime.now(timezone.utc).isoformat(),
+                resolved_action="send_email",
+            )
+            return {"message": "Email sent successfully", "status": "resolved"}
+
+        return JSONResponse(
+            {"error": "Failed to send email", "details": result_data},
+            status_code=500,
+        )
+
+    # ── Save Draft via Composio ──
+    if action_type == "save_draft":
+        result_str = composio_tools.execute("GMAIL_CREATE_EMAIL_DRAFT", {
+            "recipient_email": meta.get("to", ""),
+            "subject": meta.get("subject", ""),
+            "body": meta.get("body", ""),
+            "user_id": "me",
+        })
+        result_data = _json.loads(result_str)
+
+        if result_data.get("successful") or (result_data.get("data") or {}).get("successful"):
+            # Mark as archived (user chose to deal with it later)
+            notification_store.archive(notification_id)
+            return {"message": "Draft saved to Gmail", "status": "draft_saved"}
+
+        return JSONResponse(
+            {"error": "Failed to save draft", "details": result_data},
+            status_code=500,
+        )
+
+    return JSONResponse({"error": f"Unknown action_type: {action_type}"}, status_code=400)
+
+
 @app.get("/api/notifications/{notification_id}/session")
 async def get_notification_session(notification_id: str):
     """Load the autonomous session associated with a notification.

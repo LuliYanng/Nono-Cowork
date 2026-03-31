@@ -369,6 +369,13 @@ class NotificationStore:
         """Dismiss a notification."""
         return self._update_status(notification_id, "dismissed")
 
+    def archive(self, notification_id: str) -> bool:
+        """Archive a notification — user has reviewed and handled it."""
+        return self._update_status(
+            notification_id, "archived",
+            archived_at=datetime.now(timezone.utc).isoformat(),
+        )
+
     def delete(self, notification_id: str) -> bool:
         """Delete a notification and optionally its session."""
         with self._lock:

@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { Toaster } from "sonner";
 
 // Electron window control API exposed via preload
 declare global {
@@ -539,6 +540,40 @@ function App() {
     }
   }, [fetchNotifications]);
 
+  const handleArchive = useCallback(async (notification: Notification) => {
+    try {
+      await fetch(`${API_BASE}/api/notifications/${notification.id}/action`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ action_type: "archive" }),
+      });
+      fetchNotifications();
+    } catch {
+      // ignore
+    }
+  }, [fetchNotifications]);
+
+  const handleNotificationAction = useCallback(async (
+    notificationId: string,
+    actionType: string,
+    deliverableIndex: number,
+  ): Promise<boolean> => {
+    try {
+      const res = await fetch(`${API_BASE}/api/notifications/${notificationId}/action`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ action_type: actionType, deliverable_index: deliverableIndex }),
+      });
+      if (res.ok) {
+        fetchNotifications();
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }, [fetchNotifications]);
+
   // Load session list, models, and notifications on mount
   useEffect(() => {
     fetchSessions();
@@ -776,6 +811,7 @@ function App() {
   }, [handleSubmit]);
 
   return (
+    <>
     <TooltipProvider>
       <div className="flex h-screen bg-background text-foreground overflow-hidden">
         {/* Sidebar */}
@@ -870,6 +906,8 @@ function App() {
                 handleNotificationClick(notif);
                 setActiveView("chat");
               }}
+              onArchive={handleArchive}
+              onExecuteAction={handleNotificationAction}
               onMarkAllRead={handleMarkAllRead}
             />
           ) : activeView === "routines" ? (
@@ -1169,6 +1207,14 @@ function App() {
         </div>
       </div>
     </TooltipProvider>
+    <Toaster
+      position="top-right"
+      toastOptions={{
+        className: "!bg-background !text-foreground !border-border/50 !shadow-lg",
+        duration: 4000,
+      }}
+    />
+    </>
   );
 }
 

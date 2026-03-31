@@ -10,9 +10,10 @@
  */
 
 import { useState } from "react";
-import { Send, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { Send, CheckCircle2, Loader2, FileEdit } from "lucide-react";
 import { Icon } from "@iconify/react";
-import type { Deliverable, DeliverableAction } from "../notification-card";
+import { toast } from "sonner";
+import type { Deliverable } from "../notification-card";
 import type { ActionStatus } from "./types";
 
 // ═══════════════════════════════════════════
@@ -22,7 +23,7 @@ import type { ActionStatus } from "./types";
 interface EmailDraftActionProps {
   deliverable: Deliverable;
   isUnread: boolean;
-  onAction?: (action: DeliverableAction) => void;
+  onExecuteAction?: (actionType: string) => Promise<boolean>;
 }
 
 // ═══════════════════════════════════════════
@@ -32,9 +33,10 @@ interface EmailDraftActionProps {
 export function EmailDraftAction({
   deliverable,
   isUnread,
-  onAction,
+  onExecuteAction,
 }: EmailDraftActionProps) {
   const [status, setStatus] = useState<ActionStatus>("idle");
+  const [successMsg, setSuccessMsg] = useState("");
   const meta = (deliverable.metadata || {}) as Record<string, string>;
 
   const to = meta.to || "";
@@ -42,16 +44,42 @@ export function EmailDraftAction({
   const subject = meta.subject || "";
   const body = meta.body || meta.body_preview || "";
 
-  const handleSend = () => {
+  const handleSaveDraft = async () => {
+    if (!onExecuteAction) return;
     setStatus("loading");
-    onAction?.({ label: "发送", action_type: "send_email", primary: true });
-    // TODO: wire to POST /api/notifications/{id}/execute-action
-    // For now, simulate success after a brief delay
-    setTimeout(() => setStatus("success"), 1200);
+    try {
+      const ok = await onExecuteAction("save_draft");
+      if (ok) {
+        setStatus("success");
+        setSuccessMsg("已保存到 Gmail 草稿箱");
+        toast.success("已保存到 Gmail 草稿箱");
+      } else {
+        setStatus("idle");
+        toast.error("保存草稿失败，请重试");
+      }
+    } catch {
+      setStatus("idle");
+      toast.error("保存草稿失败，请重试");
+    }
   };
 
-  const handleDismiss = () => {
-    onAction?.({ label: "取消", action_type: "dismiss", primary: false });
+  const handleSend = async () => {
+    if (!onExecuteAction) return;
+    setStatus("loading");
+    try {
+      const ok = await onExecuteAction("send_email");
+      if (ok) {
+        setStatus("success");
+        setSuccessMsg("邮件已发送");
+        toast.success("邮件已成功发送");
+      } else {
+        setStatus("idle");
+        toast.error("发送失败，请重试");
+      }
+    } catch {
+      setStatus("idle");
+      toast.error("发送失败，请重试");
+    }
   };
 
   return (
@@ -116,21 +144,17 @@ export function EmailDraftAction({
         {status === "success" ? (
           <div className="flex items-center gap-1.5 text-[13px] font-medium text-emerald-600 dark:text-emerald-500 animate-in fade-in duration-300">
             <CheckCircle2 size={15} />
-            <span>已发送</span>
-          </div>
-        ) : status === "error" ? (
-          <div className="flex items-center gap-1.5 text-[13px] font-medium text-red-500 animate-in fade-in duration-300">
-            <AlertCircle size={15} />
-            <span>发送失败</span>
+            <span>{successMsg}</span>
           </div>
         ) : (
           <>
             <button
-              onClick={handleDismiss}
+              onClick={handleSaveDraft}
               disabled={status === "loading"}
-              className="px-4 py-2 rounded-full text-[13px] font-medium text-foreground/60 hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-medium text-foreground/60 hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-50"
             >
-              取消
+              <FileEdit size={13} />
+              <span>保存到草稿</span>
             </button>
             <button
               onClick={handleSend}
@@ -143,7 +167,7 @@ export function EmailDraftAction({
               ) : (
                 <Send size={13} />
               )}
-              <span>发送</span>
+              <span>发送邮件</span>
             </button>
           </>
         )}
