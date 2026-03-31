@@ -159,12 +159,15 @@ def _print_context_bar(usage):
 
 
 def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
-               on_event=None, check_stop=None, model_override: str = None):
+               on_event=None, check_stop=None, model_override: str = None,
+               tools_override: list[dict] = None):
     """Core Agent loop.
 
     Args:
         check_stop: Optional callable that returns True if the user requested a stop.
         model_override: Optional model name to use instead of the default.
+        tools_override: Optional tool schemas to use instead of the global tools_schema.
+                       Used for subagents with restricted tool access.
     """
 
     # Initialize / reuse token stats
@@ -210,7 +213,8 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
             # ── Streaming LLM call ──
             # Iterate over chunks, emit text_chunk/reasoning_chunk events in real-time,
             # accumulate full content and tool_calls for post-processing.
-            stream = call_llm_stream(history, model=active_model, tools=tools_schema)
+            active_tools = tools_override or tools_schema
+            stream = call_llm_stream(history, model=active_model, tools=active_tools)
 
             accumulated_content = ""
             accumulated_reasoning = ""

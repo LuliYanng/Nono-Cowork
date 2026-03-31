@@ -18,6 +18,7 @@ _bg_processes: dict[int, dict] = {}   # PID → {"proc": Popen, "output": list[s
 
 @tool(
     name="run_command",
+    tags=["execute"],
     description="Execute a bash command on the Linux server. Can be used for: git clone, installing dependencies (pip install), running Python scripts, viewing file contents (cat/ls/find), creating directories, downloading files from URLs (curl -o /path/file 'url'), and any other terminal operations. Short-running commands return output directly. Long-running commands automatically return a PID; use check_command_status to view the result later.\n\nNote: If the output is very large, it will be automatically saved to a temporary file. A preview and file path will be returned; use read_file with line ranges to view specific sections.",
     parameters={
         "type": "object",
@@ -87,6 +88,7 @@ def run_command(command: str, cwd: str = "~") -> str:
 
 @tool(
     name="check_command_status",
+    tags=["read"],
     description="Check the status and output of a background command. Use this when run_command returns a PID to monitor progress. The output may be automatically saved to a file if it's large; use read_file with line ranges to view specific sections.",
     parameters={
         "type": "object",

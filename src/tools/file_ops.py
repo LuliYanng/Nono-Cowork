@@ -235,6 +235,7 @@ def _snapshot_file(file_path: str) -> str | None:
 
 @tool(
     name="read_file",
+    tags=["read"],
     description="Read file contents with optional line range. Supports text files, PDF, Excel (.xlsx), and Word (.docx) — binary formats are automatically converted to text. Use this to view code, configs, documents, spreadsheets, etc.",
     parameters={
         "type": "object",
@@ -297,6 +298,7 @@ def read_file(path: str, start_line: int = None, end_line: int = None) -> str:
 
 @tool(
     name="edit_file",
+    tags=["write"],
     description="Edit a file using search-and-replace. Performs an exact match on old_text and replaces it with new_text. Prefer this tool for modifying files instead of rewriting the entire file with run_command. A backup of the original file is automatically saved before each edit.",
     parameters={
         "type": "object",
@@ -370,6 +372,7 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
 
 @tool(
     name="write_file",
+    tags=["write"],
     description="Create a new file or overwrite an existing file with the given content. Use this to create new files (scripts, configs, documents, etc.). If the file already exists, a backup is automatically saved before overwriting. Parent directories are created automatically if they don't exist. For modifying specific parts of an existing file, prefer edit_file instead.",
     parameters={
         "type": "object",
@@ -430,6 +433,7 @@ def write_file(path: str, content: str, overwrite: bool = False) -> str:
 
 @tool(
     name="list_snapshots",
+    tags=["read"],
     description="List file snapshots created by the Agent before edits. Use this when the user wants to undo an Agent edit or recover a file the Agent accidentally broke. Each snapshot shows the timestamp and original file path.",
     parameters={
         "type": "object",

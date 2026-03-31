@@ -215,6 +215,7 @@ def _get_client():
 
 @tool(
     name="sync_status",
+    tags=["read"],
     description="Check Syncthing synchronization status. Displays all synced folder paths, their sync status, and whether the user's device is online. Use as a diagnostic tool when sync issues arise.",
     parameters={
         "type": "object",
@@ -274,6 +275,7 @@ def sync_status() -> str:
 
 @tool(
     name="sync_wait",
+    tags=["read"],
     description="Wait for file synchronization to complete. Call this after modifying files in the workspace to ensure changes have been synced to the user's local machine. Folder ID is auto-detected — no need to pass it.",
     parameters={
         "type": "object",
@@ -319,6 +321,7 @@ def sync_wait(timeout: int = 30) -> str:
 
 @tool(
     name="sync_versions",
+    tags=["read"],
     description="List recoverable file versions in the synced folder. Syncthing keeps old versions when files are modified or deleted. Use this to find files that can be restored.",
     parameters={
         "type": "object",
@@ -364,6 +367,7 @@ def sync_versions() -> str:
 
 @tool(
     name="sync_restore",
+    tags=["write"],
     description="Restore a file to a previous version. Use sync_versions() first to see available versions and their timestamps.",
     parameters={
         "type": "object",
@@ -405,6 +409,7 @@ def sync_restore(file_path: str, version_time: str) -> str:
 
 @tool(
     name="sync_pause",
+    tags=["write"],
     description="Pause syncing. Use BEFORE batch file operations (renaming many files, large refactors) to prevent the user from seeing half-finished changes. Always call sync_resume() after.",
     parameters={
         "type": "object",
@@ -429,6 +434,7 @@ def sync_pause() -> str:
 
 @tool(
     name="sync_resume",
+    tags=["write"],
     description="Resume syncing after batch file operations are complete so changes can sync to the user's machine.",
     parameters={
         "type": "object",
@@ -457,6 +463,7 @@ def sync_resume() -> str:
 
 @tool(
     name="sync_ignore_add",
+    tags=["write"],
     description="Add a pattern to .stignore so it won't sync to the user's machine. Use this BEFORE creating temporary files or directories in the sync folder that the user doesn't need (e.g., venvs, build outputs, temp data). Pattern uses Syncthing ignore syntax (e.g., '(?d)**/my_temp_dir').",
     parameters={
         "type": "object",

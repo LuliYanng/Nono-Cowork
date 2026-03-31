@@ -25,15 +25,18 @@ class SelfAgentProvider(SubagentProvider):
     description = "Self-recursive agent (uses own agent loop, always available)"
 
     def run(self, task: str, system_prompt: str = "", working_dir: str = "~",
-            model: str = "", check_stop=None, timeout: int = 300) -> str:
+            model: str = "", check_stop=None, timeout: int = 300,
+            tools_override: list[dict] = None) -> str:
         text, _, _ = self.run_with_history(
-            task, system_prompt, working_dir, model, check_stop, timeout
+            task, system_prompt, working_dir, model, check_stop, timeout,
+            tools_override=tools_override,
         )
         return text
 
     def run_with_history(self, task: str, system_prompt: str = "",
                          working_dir: str = "~", model: str = "",
-                         check_stop=None, timeout: int = 300
+                         check_stop=None, timeout: int = 300,
+                         tools_override: list[dict] = None,
                          ) -> tuple[str, list, dict]:
         # Lazy import to avoid circular dependency (agent → tools → subagent → agent)
         from agent import agent_loop
@@ -58,7 +61,8 @@ class SelfAgentProvider(SubagentProvider):
             {"role": "user", "content": task},
         ]
 
-        logger.info("Self-subagent starting (model=%s)", use_model)
+        logger.info("Self-subagent starting (model=%s, tools_override=%s)",
+                    use_model, "yes" if tools_override else "no")
 
         # Blocks until subagent completes (limited by MAX_ROUNDS)
         # Pass check_stop so user /stop propagates to the sub-agent
@@ -66,6 +70,7 @@ class SelfAgentProvider(SubagentProvider):
             sub_history,
             model_override=use_model,
             check_stop=check_stop,
+            tools_override=tools_override,
         )
 
         logger.info(

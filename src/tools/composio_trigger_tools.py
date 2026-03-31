@@ -15,6 +15,7 @@ def _is_enabled():
 
 @tool(
     name="composio_list_triggers",
+    tags=["read"],
     description=(
         "List available trigger types for a given toolkit/app. "
         "Use this to discover what events can be monitored "
@@ -41,6 +42,7 @@ def composio_list_triggers(toolkit: str) -> str:
 
 @tool(
     name="composio_create_trigger",
+    tags=["admin"],
     description=(
         "Create a new trigger to monitor events from a connected app. "
         "The trigger will automatically process events using a dedicated agent "
@@ -94,6 +96,7 @@ def composio_create_trigger(trigger_slug: str, agent_prompt: str,
 
 @tool(
     name="composio_list_active_triggers",
+    tags=["read"],
     description=(
         "List all currently active triggers. "
         "Shows what events are being monitored and their status."
@@ -112,6 +115,7 @@ def composio_list_active_triggers() -> str:
 
 @tool(
     name="composio_delete_trigger",
+    tags=["admin"],
     description=(
         "Delete/disable an active trigger. "
         "Use composio_list_active_triggers to find the trigger_id first."
@@ -136,6 +140,7 @@ def composio_delete_trigger(trigger_id: str) -> str:
 
 @tool(
     name="composio_wait_for_connection",
+    tags=["admin"],
     description=(
         "Wait for a user to complete authentication for a toolkit/app. "
         "Call this IMMEDIATELY after COMPOSIO_MANAGE_CONNECTIONS returns an 'initiated' "

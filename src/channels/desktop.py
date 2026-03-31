@@ -933,9 +933,9 @@ async def list_triggers_api():
     try:
         from composio import Composio
         client = Composio()
-        active_triggers = client.triggers.list_active()
-        for t in active_triggers:
-            tid = getattr(t, "trigger_id", str(t))
+        active_resp = client.triggers.list_active()
+        for t in getattr(active_resp, 'items', active_resp):
+            tid = getattr(t, "id", None) or getattr(t, "trigger_id", str(t))
             active_map[tid] = {
                 "status": getattr(t, "status", "ACTIVE"),
                 "created_at_remote": getattr(t, "created_at", ""),
@@ -1042,8 +1042,8 @@ async def toggle_trigger_api(trigger_id: str):
     try:
         from composio import Composio
         client = Composio()
-        active_triggers = client.triggers.list_active()
-        active_ids = {getattr(t, "trigger_id", str(t)) for t in active_triggers}
+        active_resp = client.triggers.list_active()
+        active_ids = {getattr(t, "id", None) or getattr(t, "trigger_id", str(t)) for t in getattr(active_resp, 'items', active_resp)}
         is_active = trigger_id in active_ids
     except Exception as e:
         logger.warning("Could not check trigger status: %s", e)
@@ -1072,7 +1072,7 @@ async def toggle_trigger_api(trigger_id: str):
                 user_id=COMPOSIO_USER_ID,
                 trigger_config=recipe.get("trigger_config") or {},
             )
-            new_id = getattr(trigger, "trigger_id", str(trigger))
+            new_id = getattr(trigger, "id", None) or getattr(trigger, "trigger_id", str(trigger))
 
             # If Composio assigned a new ID, migrate the recipe
             if new_id != trigger_id:
@@ -1169,8 +1169,9 @@ async def list_automations_api():
         try:
             from composio import Composio
             client = Composio()
-            for t in client.triggers.list_active():
-                active_ids.add(getattr(t, "trigger_id", str(t)))
+            active_resp = client.triggers.list_active()
+            for t in getattr(active_resp, 'items', active_resp):
+                active_ids.add(getattr(t, "id", None) or getattr(t, "trigger_id", str(t)))
         except Exception:
             pass
 

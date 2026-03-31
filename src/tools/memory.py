@@ -12,6 +12,7 @@ from tools.registry import tool
 
 @tool(
     name="memory_write",
+    tags=["write"],
     description=(
         "Write the complete contents of your persistent memory file.\n"
         "This OVERWRITES the entire file, so always include ALL memories you want to keep.\n\n"

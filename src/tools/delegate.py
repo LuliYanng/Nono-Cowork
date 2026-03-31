@@ -22,6 +22,7 @@ logger = logging.getLogger("tools.delegate")
 
 @tool(
     name="delegate",
+    tags=["admin"],
     description=(
         "Delegate a complex task to an independent sub-agent for execution. "
         "The sub-agent has its own context window and tools, making it ideal for:\n"
@@ -133,6 +134,7 @@ def delegate(
 
 @tool(
     name="delegate_status",
+    tags=["read"],
     description="Show available sub-agent providers and which one is currently active.",
     parameters={
         "type": "object",

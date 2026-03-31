@@ -80,10 +80,64 @@ def init():
         _composio_session = None
         _composio_tools_schema = []
 
-
 def get_tools_schema() -> list[dict]:
     """Return Composio's meta-tool schemas (for merging into the tools list)."""
     return _composio_tools_schema
+
+
+# ── Tool access presets → Composio session config ──
+
+_COMPOSIO_ACCESS_CONFIG = {
+    "read_only": {"tags": ["readOnlyHint"]},
+    "read_write": {"tags": {"disable": ["destructiveHint"]}},
+    "safe": {"tags": {"disable": ["destructiveHint"]}},
+    # "full" = no restrictions
+}
+
+
+def create_restricted_tools_schema(tool_access: str) -> list[dict] | None:
+    """Create Composio meta-tool schemas with restricted tool access.
+
+    Creates a separate Composio session with the specified restrictions.
+    The returned schemas can replace the default Composio schemas in tools_override.
+
+    Args:
+        tool_access: Preset name ("read_only", "read_write", "safe", "full").
+
+    Returns:
+        Restricted meta-tool schemas, or None if tool_access is "full" / unsupported.
+    """
+    if not _composio_client or tool_access in (None, "full"):
+        return None
+
+    config = _COMPOSIO_ACCESS_CONFIG.get(tool_access)
+    if not config:
+        logger.warning("Unknown Composio tool_access preset: %s, using full access", tool_access)
+        return None
+
+    try:
+        restricted_session = _composio_client.create(
+            user_id=COMPOSIO_USER_ID,
+            **config,
+        )
+        restricted_schemas = restricted_session.tools()
+
+        # Apply same exclusion filter as init()
+        _EXCLUDED_TOOLS = {"COMPOSIO_REMOTE_WORKBENCH", "COMPOSIO_REMOTE_BASH_TOOL"}
+        restricted_schemas = [
+            t for t in restricted_schemas
+            if t.get("function", {}).get("name") not in _EXCLUDED_TOOLS
+        ]
+
+        logger.info(
+            "Created restricted Composio session (tool_access=%s): %d meta tools",
+            tool_access, len(restricted_schemas),
+        )
+        return restricted_schemas
+
+    except Exception as e:
+        logger.error("Failed to create restricted Composio session: %s", e)
+        return None
 
 
 def is_composio_tool(tool_name: str) -> bool:

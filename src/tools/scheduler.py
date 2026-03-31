@@ -23,6 +23,7 @@ def _require_context():
 
 @tool(
     name="create_scheduled_task",
+    tags=["admin"],
     description=(
         "Create a new scheduled task that runs automatically at specified times. "
         "When the task fires, a fresh Agent session will execute the task_prompt "
@@ -83,6 +84,7 @@ def create_scheduled_task(task_name: str, cron: str, task_prompt: str) -> str:
 
 @tool(
     name="list_scheduled_tasks",
+    tags=["read"],
     description="List all scheduled tasks for the current user. Shows task ID, name, cron schedule, enabled status, and last run info.",
     parameters={
         "type": "object",
@@ -122,6 +124,7 @@ def list_scheduled_tasks() -> str:
 
 @tool(
     name="delete_scheduled_task",
+    tags=["admin"],
     description="Delete a scheduled task by its ID. The task will be permanently removed.",
     parameters={
         "type": "object",
@@ -157,6 +160,7 @@ def delete_scheduled_task(task_id: str) -> str:
 
 @tool(
     name="update_scheduled_task",
+    tags=["admin"],
     description="Update a scheduled task's properties. You can change the cron schedule, task prompt, task name, or enable/disable it.",
     parameters={
         "type": "object",

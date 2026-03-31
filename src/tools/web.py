@@ -11,6 +11,7 @@ from tools.registry import tool
 
 @tool(
     name="read_webpage",
+    tags=["network", "read"],
     description="Read webpage content and convert it to readable text. Use this to view specific web pages from search results, read documentation, GitHub READMEs, tech blogs, etc.",
     parameters={
         "type": "object",
@@ -52,6 +53,7 @@ def read_webpage(url: str) -> str:
 
 @tool(
     name="web_search",
+    tags=["network", "read"],
     description="Search the internet using a search engine. Use this when you need to find general (non-academic) information such as tool documentation, tech blogs, error solutions, open-source project info, etc.",
     parameters={
         "type": "object",

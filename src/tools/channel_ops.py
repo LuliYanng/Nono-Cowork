@@ -8,6 +8,7 @@ from tools.registry import tool
 
 @tool(
     name="send_file",
+    tags=["write"],
     description="Send a file to the user via their IM channel (Feishu/Telegram). Use this when the user asks you to send, share, or deliver a file to them. The file will be sent as an attachment in the chat. Images are automatically displayed inline.",
     parameters={
         "type": "object",
