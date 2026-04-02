@@ -52,10 +52,10 @@ import {
   ToolOutput,
 } from "@/components/ai-elements/tool";
 import { Sidebar, type SessionItem, type SidebarView } from "@/components/sidebar";
-import { type Notification } from "@/components/notification-card";
+import { type Notification, type Deliverable } from "@/components/notification-card";
 import { WorkspacePage } from "@/components/workspace-page";
 import { RoutinesPage } from "@/components/routines-page";
-import { syncPaths } from "@/components/deliverables";
+import { syncPaths, FileCard, getDeliverableComponent } from "@/components/deliverables";
 import {
   Context,
   ContextTrigger,
@@ -237,7 +237,11 @@ function authHeaders(extra: Record<string, string> = {}): Record<string, string>
 }
 
 // ── Parts Renderer ──
-// Renders MessagePart[] in order: text blocks + tool calls interleaved
+// Renders MessagePart[] in order: text blocks + tool calls interleaved.
+// At the end, aggregates file operations and report_result deliverables
+// into interactive deliverable cards (FileCard, EmailDraftCard, etc.)
+
+const FILE_TOOL_NAMES = ["write_file", "edit_file", "create_file"];
 
 function PartsRenderer({
   parts,
@@ -252,6 +256,11 @@ function PartsRenderer({
 }) {
   const items: React.ReactNode[] = [];
   let i = 0;
+
+  // ── Collectors for end-of-round deliverables ──
+  const fileOps: Array<{ path: string; action: "created" | "modified" }> = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const reportDeliverables: Array<Record<string, any>> = [];
 
   while (i < parts.length) {
     const part = parts[i];
@@ -272,22 +281,42 @@ function PartsRenderer({
         nextPart?.type === "tool_result" &&
         nextPart.toolName === part.toolName;
 
+      // ── Collect file operations for end-of-round rendering ──
+      const toolName = part.toolName || "";
+      if (FILE_TOOL_NAMES.includes(toolName) && hasResult) {
+        const filePath = (part.args?.path || part.args?.file_path || part.args?.target_file) as string | undefined;
+        if (filePath) {
+          fileOps.push({
+            path: filePath,
+            action: toolName === "write_file" || toolName === "create_file" ? "created" : "modified",
+          });
+        }
+      }
+
+      // ── Collect report_result deliverables (skip its tool panel) ──
+      if (toolName === "report_result" && hasResult) {
+        const deliverables = part.args?.deliverables;
+        if (Array.isArray(deliverables)) {
+          reportDeliverables.push(...deliverables);
+        }
+        // Don't render report_result as a tool panel — its deliverables
+        // will be rendered natively at the end of the message
+        i = hasResult ? i + 2 : i + 1;
+        continue;
+      }
+
+      // ── Normal tool panel rendering ──
       let toolState: "input-available" | "output-available" | "input-streaming";
       if (hasResult) {
         toolState = "output-available";
       } else if (isActive || (isStreaming && part.toolName === "delegate")) {
-        // delegate stays "Running" as long as the stream is active (even if
-        // thinkingMsgId was temporarily cleared by a status event)
         toolState = "input-available";
       } else {
         toolState = "input-streaming";
       }
 
-      // Historical messages: collapsed by default; live streaming: auto-expand
       const shouldOpen = defaultCollapsed ? false : toolState === "output-available";
 
-      // Stop button for long-running delegate tool — show whenever delegate
-      // is still running (stream active + no result), independent of thinkingMsgId
       const delegateStopAction =
         part.toolName === "delegate" && !hasResult && isStreaming ? (
           <button
@@ -330,6 +359,36 @@ function PartsRenderer({
 
     // Skip standalone tool_result
     i++;
+  }
+
+  // ── End-of-round deliverable cards ──
+  // Only render when the round is complete (not actively streaming)
+  const hasDeliverables = fileOps.length > 0 || reportDeliverables.length > 0;
+  if (hasDeliverables && !isActive) {
+    items.push(
+      <div key="deliverables-footer" className="flex flex-col gap-1.5 mt-2">
+        {/* File operation cards */}
+        {fileOps.map((op, idx) => (
+          <FileCard key={`fop-${idx}`} path={op.path} action={op.action} mode="compact" />
+        ))}
+
+        {/* report_result deliverables via registry */}
+        {reportDeliverables.map((d, idx) => {
+          const Component = getDeliverableComponent(d.type);
+          if (Component) {
+            return (
+              <Component
+                key={`rd-${idx}`}
+                deliverable={d as unknown as Deliverable}
+                isUnread={true}
+                mode="compact"
+              />
+            );
+          }
+          return null;
+        })}
+      </div>
+    );
   }
 
   return <>{items}</>;
