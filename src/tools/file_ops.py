@@ -138,10 +138,24 @@ _REQUIRED_STIGNORE_PATTERNS = [
     ("Node.js", [
         "(?d)**/node_modules",
     ]),
+    ("Build outputs", [
+        "(?d)**/dist",
+        "(?d)**/build",
+        "(?d)**/*.whl",
+    ]),
+    ("Temp and intermediate files", [
+        "(?d)**/*.tmp",
+        "(?d)**/*.bak",
+        "(?d)**/*.swp",
+        "(?d)**/*.swo",
+        "(?d)**/*~",
+    ]),
     ("IDE and system files", [
         "(?d)**/.idea",
         "(?d)**/.vscode",
         "(?d)**/.DS_Store",
+        "(?d)**/Thumbs.db",
+        "(?d)**/desktop.ini",
     ]),
     ("Git repos", [
         "(?d)**/.git",
