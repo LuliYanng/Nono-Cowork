@@ -55,7 +55,7 @@ import { Sidebar, type SessionItem, type SidebarView } from "@/components/sideba
 import { type Notification } from "@/components/notification-card";
 import { WorkspacePage } from "@/components/workspace-page";
 import { RoutinesPage } from "@/components/routines-page";
-import { syncPaths, FileCard } from "@/components/deliverables";
+import { syncPaths } from "@/components/deliverables";
 import {
   Context,
   ContextTrigger,
@@ -305,12 +305,6 @@ function PartsRenderer({
           </button>
         ) : undefined;
 
-      // Detect file operations for enhanced rendering
-      const toolName = part.toolName || "";
-      const FILE_TOOLS = ["write_file", "edit_file", "read_file", "create_file"];
-      const isFileOp = FILE_TOOLS.includes(toolName);
-      const filePath = (part.args?.path || part.args?.file_path || part.args?.target_file) as string | undefined;
-
       items.push(
         <Tool key={`t-${i}`} defaultOpen={shouldOpen}>
           <ToolHeader
@@ -325,14 +319,6 @@ function PartsRenderer({
             )}
             {hasResult && nextPart && nextPart.type === "tool_result" && (
               <ToolOutput output={nextPart.result} errorText={undefined} />
-            )}
-            {/* File operation: render compact FileCard after tool output */}
-            {isFileOp && hasResult && filePath && (
-              <FileCard
-                path={filePath}
-                action={toolName === "write_file" || toolName === "create_file" ? "created" : "modified"}
-                mode="compact"
-              />
             )}
           </ToolContent>
         </Tool>
