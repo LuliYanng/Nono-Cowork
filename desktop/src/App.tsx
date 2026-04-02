@@ -1169,7 +1169,7 @@ function App() {
                                         key={`rd-${idx}-${di}`}
                                         deliverable={d as unknown as Deliverable}
                                         isUnread={true}
-                                        mode="compact"
+                                        mode="full"
                                       />
                                     );
                                   }
