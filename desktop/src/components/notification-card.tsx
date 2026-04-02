@@ -295,7 +295,7 @@ export function NotificationCard({
 
       {/* ── Deliverables — type-routed rendering ── */}
       {deliverables.length > 0 && (
-        <div className="px-4 pb-2 flex flex-col gap-1.5">
+        <div className="px-4 pb-2 flex flex-wrap gap-2">
           {deliverables.map((d, i) => (
             <DeliverableCard
               key={i}

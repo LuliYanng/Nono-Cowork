@@ -1067,84 +1067,120 @@ function App() {
                         </div>
                       </div>
                     )}
-                    {messages.map((msg) => (
-                      <Message key={msg.id} from={msg.role}>
-                        <MessageContent>
-                          {msg.role === "assistant" ? (
-                            <>
-                              {msg.reasoning && (
-                                <Reasoning
-                                  isStreaming={msg.id === thinkingMsgId && !msg.content}
-                                  className="w-full"
-                                >
-                                  <ReasoningTrigger />
-                                  <ReasoningContent>{msg.reasoning}</ReasoningContent>
-                                </Reasoning>
-                              )}
-                              {msg.parts && msg.parts.length > 0 && (
-                                <PartsRenderer
-                                  parts={msg.parts}
-                                  isActive={msg.id === thinkingMsgId}
-                                  isStreaming={isStreaming}
-                                  defaultCollapsed={msg.id.startsWith("hist-")}
-                                />
-                              )}
-                            </>
-                          ) : (
-                            <p className="whitespace-pre-wrap">{msg.content}</p>
-                          )}
-                        </MessageContent>
-                      </Message>
-                    ))}
-                    {/* ── End-of-loop deliverables (aggregated across ALL messages) ── */}
-                    {!isStreaming && messages.length > 0 && (() => {
-                      const allFileOps: Array<{ path: string; action: "created" | "modified" }> = [];
-                      const allReportDeliverables: Array<Record<string, unknown>> = [];
-
-                      for (const msg of messages) {
-                        if (msg.role !== "assistant" || !msg.parts) continue;
-                        for (let j = 0; j < msg.parts.length; j++) {
-                          const p = msg.parts[j];
-                          if (p.type !== "tool_call") continue;
-                          const tn = p.toolName || "";
-                          const next = j + 1 < msg.parts.length ? msg.parts[j + 1] : null;
-                          const done = next?.type === "tool_result" && next.toolName === tn;
-                          if (!done) continue;
-
-                          if (FILE_TOOL_NAMES.includes(tn)) {
-                            const fp = (p.args?.path || p.args?.file_path || p.args?.target_file) as string | undefined;
-                            if (fp) allFileOps.push({ path: fp, action: tn === "edit_file" ? "modified" : "created" });
-                          }
-                          if (tn === "report_result") {
-                            const delivs = p.args?.deliverables;
-                            if (Array.isArray(delivs)) allReportDeliverables.push(...delivs);
-                          }
+                    {(() => {
+                      // ── Pre-compute turn boundaries ──
+                      // A "turn" = a user message + all following assistant messages (until next user msg)
+                      // We render deliverables at the end of each completed turn.
+                      const turnEnds: Set<number> = new Set();
+                      for (let k = 0; k < messages.length; k++) {
+                        if (messages[k].role === "user" && k > 0) {
+                          // The previous message was the end of a turn
+                          turnEnds.add(k - 1);
                         }
                       }
+                      // Last message is also a turn end (if not streaming)
+                      if (messages.length > 0 && !isStreaming) {
+                        turnEnds.add(messages.length - 1);
+                      }
 
-                      if (allFileOps.length === 0 && allReportDeliverables.length === 0) return null;
+                      // Collect deliverables for a range of messages [start..end]
+                      function collectTurnDeliverables(start: number, end: number) {
+                        const fileOps: Array<{ path: string; action: "created" | "modified" }> = [];
+                        const reportDelivs: Array<Record<string, unknown>> = [];
 
-                      return (
-                        <div className="flex flex-col gap-1.5 px-1">
-                          {allFileOps.map((op, idx) => (
-                            <FileCard key={`fop-${idx}`} path={op.path} action={op.action} mode="compact" />
-                          ))}
-                          {allReportDeliverables.map((d, idx) => {
-                            const Component = getDeliverableComponent(d.type as string);
-                            if (Component) {
-                              return (
-                                <Component
-                                  key={`rd-${idx}`}
-                                  deliverable={d as unknown as Deliverable}
-                                  isUnread={true}
-                                  mode="compact"
-                                />
-                              );
+                        for (let m = start; m <= end; m++) {
+                          const msg = messages[m];
+                          if (msg.role !== "assistant" || !msg.parts) continue;
+                          for (let j = 0; j < msg.parts.length; j++) {
+                            const p = msg.parts[j];
+                            if (p.type !== "tool_call") continue;
+                            const tn = p.toolName || "";
+                            const next = j + 1 < msg.parts.length ? msg.parts[j + 1] : null;
+                            const done = next?.type === "tool_result" && next.toolName === tn;
+                            if (!done) continue;
+
+                            if (FILE_TOOL_NAMES.includes(tn)) {
+                              const fp = (p.args?.path || p.args?.file_path || p.args?.target_file) as string | undefined;
+                              if (fp) fileOps.push({ path: fp, action: tn === "edit_file" ? "modified" : "created" });
                             }
-                            return null;
-                          })}
-                        </div>
-                      );
+                            if (tn === "report_result") {
+                              const delivs = p.args?.deliverables;
+                              if (Array.isArray(delivs)) reportDelivs.push(...delivs);
+                            }
+                          }
+                        }
+
+                        if (fileOps.length === 0 && reportDelivs.length === 0) return null;
+                        return { fileOps, reportDelivs };
+                      }
+
+                      // ── Render messages with per-turn deliverables ──
+                      const output: React.ReactNode[] = [];
+                      let turnStart = 0;
+
+                      messages.forEach((msg, idx) => {
+                        // Render the message
+                        output.push(
+                          <Message key={msg.id} from={msg.role}>
+                            <MessageContent>
+                              {msg.role === "assistant" ? (
+                                <>
+                                  {msg.reasoning && (
+                                    <Reasoning
+                                      isStreaming={msg.id === thinkingMsgId && !msg.content}
+                                      className="w-full"
+                                    >
+                                      <ReasoningTrigger />
+                                      <ReasoningContent>{msg.reasoning}</ReasoningContent>
+                                    </Reasoning>
+                                  )}
+                                  {msg.parts && msg.parts.length > 0 && (
+                                    <PartsRenderer
+                                      parts={msg.parts}
+                                      isActive={msg.id === thinkingMsgId}
+                                      isStreaming={isStreaming}
+                                      defaultCollapsed={msg.id.startsWith("hist-")}
+                                    />
+                                  )}
+                                </>
+                              ) : (
+                                <p className="whitespace-pre-wrap">{msg.content}</p>
+                              )}
+                            </MessageContent>
+                          </Message>
+                        );
+
+                        // If this is a turn end, render deliverables for this turn
+                        if (turnEnds.has(idx)) {
+                          const collected = collectTurnDeliverables(turnStart, idx);
+                          if (collected) {
+                            output.push(
+                              <div key={`deliverables-${idx}`} className="flex flex-wrap gap-2 px-1">
+                                {collected.fileOps.map((op, fi) => (
+                                  <FileCard key={`fop-${idx}-${fi}`} path={op.path} action={op.action} mode="compact" />
+                                ))}
+                                {collected.reportDelivs.map((d, di) => {
+                                  const Component = getDeliverableComponent(d.type as string);
+                                  if (Component) {
+                                    return (
+                                      <Component
+                                        key={`rd-${idx}-${di}`}
+                                        deliverable={d as unknown as Deliverable}
+                                        isUnread={true}
+                                        mode="compact"
+                                      />
+                                    );
+                                  }
+                                  return null;
+                                })}
+                              </div>
+                            );
+                          }
+                          turnStart = idx + 1;
+                        }
+                      });
+
+                      return output;
                     })()}
                     {isStreaming && !animatingMsgId && !thinkingMsgId && statusText && (
                       <div className="text-sm text-muted-foreground animate-pulse px-1">
