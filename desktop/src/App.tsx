@@ -257,11 +257,6 @@ function PartsRenderer({
   const items: React.ReactNode[] = [];
   let i = 0;
 
-  // ── Collectors for end-of-round deliverables ──
-  const fileOps: Array<{ path: string; action: "created" | "modified" }> = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const reportDeliverables: Array<Record<string, any>> = [];
-
   while (i < parts.length) {
     const part = parts[i];
 
@@ -281,27 +276,11 @@ function PartsRenderer({
         nextPart?.type === "tool_result" &&
         nextPart.toolName === part.toolName;
 
-      // ── Collect file operations for end-of-round rendering ──
+      // Skip report_result tool panel — its deliverables are rendered
+      // in the aggregated footer after all messages
       const toolName = part.toolName || "";
-      if (FILE_TOOL_NAMES.includes(toolName) && hasResult) {
-        const filePath = (part.args?.path || part.args?.file_path || part.args?.target_file) as string | undefined;
-        if (filePath) {
-          fileOps.push({
-            path: filePath,
-            action: toolName === "write_file" || toolName === "create_file" ? "created" : "modified",
-          });
-        }
-      }
-
-      // ── Collect report_result deliverables (skip its tool panel) ──
       if (toolName === "report_result" && hasResult) {
-        const deliverables = part.args?.deliverables;
-        if (Array.isArray(deliverables)) {
-          reportDeliverables.push(...deliverables);
-        }
-        // Don't render report_result as a tool panel — its deliverables
-        // will be rendered natively at the end of the message
-        i = hasResult ? i + 2 : i + 1;
+        i = i + 2;
         continue;
       }
 
@@ -359,36 +338,6 @@ function PartsRenderer({
 
     // Skip standalone tool_result
     i++;
-  }
-
-  // ── End-of-round deliverable cards ──
-  // Only render when the round is complete (not actively streaming)
-  const hasDeliverables = fileOps.length > 0 || reportDeliverables.length > 0;
-  if (hasDeliverables && !isActive) {
-    items.push(
-      <div key="deliverables-footer" className="flex flex-col gap-1.5 mt-2">
-        {/* File operation cards */}
-        {fileOps.map((op, idx) => (
-          <FileCard key={`fop-${idx}`} path={op.path} action={op.action} mode="compact" />
-        ))}
-
-        {/* report_result deliverables via registry */}
-        {reportDeliverables.map((d, idx) => {
-          const Component = getDeliverableComponent(d.type);
-          if (Component) {
-            return (
-              <Component
-                key={`rd-${idx}`}
-                deliverable={d as unknown as Deliverable}
-                isUnread={true}
-                mode="compact"
-              />
-            );
-          }
-          return null;
-        })}
-      </div>
-    );
   }
 
   return <>{items}</>;
@@ -1147,6 +1096,56 @@ function App() {
                         </MessageContent>
                       </Message>
                     ))}
+                    {/* ── End-of-loop deliverables (aggregated across ALL messages) ── */}
+                    {!isStreaming && messages.length > 0 && (() => {
+                      const allFileOps: Array<{ path: string; action: "created" | "modified" }> = [];
+                      const allReportDeliverables: Array<Record<string, unknown>> = [];
+
+                      for (const msg of messages) {
+                        if (msg.role !== "assistant" || !msg.parts) continue;
+                        for (let j = 0; j < msg.parts.length; j++) {
+                          const p = msg.parts[j];
+                          if (p.type !== "tool_call") continue;
+                          const tn = p.toolName || "";
+                          const next = j + 1 < msg.parts.length ? msg.parts[j + 1] : null;
+                          const done = next?.type === "tool_result" && next.toolName === tn;
+                          if (!done) continue;
+
+                          if (FILE_TOOL_NAMES.includes(tn)) {
+                            const fp = (p.args?.path || p.args?.file_path || p.args?.target_file) as string | undefined;
+                            if (fp) allFileOps.push({ path: fp, action: tn === "edit_file" ? "modified" : "created" });
+                          }
+                          if (tn === "report_result") {
+                            const delivs = p.args?.deliverables;
+                            if (Array.isArray(delivs)) allReportDeliverables.push(...delivs);
+                          }
+                        }
+                      }
+
+                      if (allFileOps.length === 0 && allReportDeliverables.length === 0) return null;
+
+                      return (
+                        <div className="flex flex-col gap-1.5 px-1">
+                          {allFileOps.map((op, idx) => (
+                            <FileCard key={`fop-${idx}`} path={op.path} action={op.action} mode="compact" />
+                          ))}
+                          {allReportDeliverables.map((d, idx) => {
+                            const Component = getDeliverableComponent(d.type as string);
+                            if (Component) {
+                              return (
+                                <Component
+                                  key={`rd-${idx}`}
+                                  deliverable={d as unknown as Deliverable}
+                                  isUnread={true}
+                                  mode="compact"
+                                />
+                              );
+                            }
+                            return null;
+                          })}
+                        </div>
+                      );
+                    })()}
                     {isStreaming && !animatingMsgId && !thinkingMsgId && statusText && (
                       <div className="text-sm text-muted-foreground animate-pulse px-1">
                         {statusText}

@@ -142,8 +142,8 @@ function GenericDeliverableCard({
     <div
       className={`rounded-lg border px-3 py-2.5 transition-colors ${
         isUnread
-          ? "bg-muted/20 border-border/40"
-          : "bg-muted/10 border-border/15"
+          ? "bg-muted/20 border-border/60"
+          : "bg-muted/10 border-border/40"
       }`}
     >
       {/* Deliverable header: icon + label + description */}
@@ -241,7 +241,7 @@ export function NotificationCard({
       className={`rounded-xl border transition-all duration-200 ${
         isUnread
           ? "bg-card border-border/80 shadow-sm"
-          : "bg-card/50 border-border/30"
+          : "bg-card/60 border-border/50"
       }`}
     >
       {/* ── Top bar: source + time ── */}

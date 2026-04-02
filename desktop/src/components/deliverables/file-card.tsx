@@ -100,7 +100,7 @@ export function FileCard(props: FileCardProps) {
   // ── Compact mode: inline bar for chat ──
   if (mode === "compact") {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-border/30 bg-muted/15 px-3 py-2 mt-2">
+      <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 mt-2">
         <FileIcon size={14} className="shrink-0 text-muted-foreground/50" strokeWidth={1.8} />
         <span className="text-[13px] font-medium text-foreground/70 truncate min-w-0">
           {fileName}
@@ -139,7 +139,7 @@ export function FileCard(props: FileCardProps) {
   // ── Full mode: single row for notifications ──
   return (
     <TooltipProvider delay={300}>
-      <div className="flex items-center gap-2 rounded-lg border border-border/30 bg-muted/8 px-3 py-2">
+      <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/8 px-3 py-2">
         <FileIcon
           size={14}
           strokeWidth={1.7}
