@@ -95,7 +95,7 @@ export function WorkspacePage({
                 : "text-muted-foreground/40 hover:text-foreground/60 hover:bg-muted/30"
             }`}
           >
-            待处理
+            Pending
           </button>
           <button
             onClick={() => setTab("done")}
@@ -105,7 +105,7 @@ export function WorkspacePage({
                 : "text-muted-foreground/40 hover:text-foreground/60 hover:bg-muted/30"
             }`}
           >
-            已处理
+            Done
           </button>
         </div>
       </div>
@@ -119,7 +119,7 @@ export function WorkspacePage({
             ) : (
               <div className="flex flex-col items-center justify-center py-20 text-muted-foreground/30">
                 <CheckCircle2 size={32} className="mb-3 opacity-50" />
-                <p className="text-[14px]">暂无已处理的任务</p>
+                <p className="text-[14px]">No completed tasks yet</p>
               </div>
             )
           ) : (

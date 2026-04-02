@@ -532,7 +532,7 @@ async def inject_mock_notifications():
                         "type": "file",
                         "label": "报价表模板.xlsx",
                         "description": "附件已下载到 SyncFromLocal/Inbox/",
-                        "metadata": {"path": "SyncFromLocal/Inbox/报价表模板.xlsx", "size": "24.5 KB"},
+                        "metadata": {"path": "SyncFromLocal/Inbox/报价表模板.xlsx", "size": "24.5 KB", "action": "created"},
                     },
                     {
                         "type": "email_draft",
@@ -856,6 +856,37 @@ async def get_notification_session(notification_id: str):
         "last_active": session_data.get("last_active"),
         "autonomous": True,
     }
+
+
+# ══════════════════════════════════════════════
+# RESTful: Sync Config (path mapping for desktop)
+# ══════════════════════════════════════════════
+
+@app.get("/api/sync/config")
+async def get_sync_config():
+    """Return Syncthing folder config for frontend path mapping.
+
+    The desktop frontend needs to convert VPS-side absolute paths
+    (e.g., /root/SyncFromLocal/inbox/report.pdf) to user-local paths
+    (e.g., D:\\Sync\\inbox\\report.pdf).  This endpoint provides the
+    VPS-side folder roots so the frontend can compute the relative path.
+    """
+    try:
+        from tools.syncthing import SyncthingClient
+        st = SyncthingClient()
+        folders = st.get_folders()
+        return {
+            "folders": [
+                {
+                    "id": f["id"],
+                    "label": f.get("label", f["id"]),
+                    "path": f["path"],
+                }
+                for f in folders
+            ]
+        }
+    except Exception:
+        return {"folders": []}
 
 
 # ══════════════════════════════════════════════

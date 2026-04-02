@@ -1,10 +1,8 @@
 /**
- * EmailDraftAction — Gmail draft review panel embedded in notification cards.
+ * EmailDraftCard — Gmail draft review panel.
  *
- * Displays a full email draft with fields (to, subject, body) in a
- * Gmail-branded panel. Action buttons (Cancel / Send) are displayed
- * but not wired to backend yet — the callback chain is ready for
- * trivial wiring when the execute-action API is added.
+ * Migrated from actions/email-draft-action.tsx to deliverables/.
+ * Now supports dual mode: full (notifications) and compact (chat).
  *
  * Design ref: Gmail compose/draft review interface
  */
@@ -14,32 +12,34 @@ import { Send, CheckCircle2, Loader2, FileEdit, EyeOff } from "lucide-react";
 import { Icon } from "@iconify/react";
 import { toast } from "sonner";
 import type { Deliverable, Notification } from "../notification-card";
-import type { ActionStatus } from "./types";
+import type { ActionStatus, EmailDraftMetadata, DeliverableMode } from "./types";
 
 // ═══════════════════════════════════════════
 //  Props
 // ═══════════════════════════════════════════
 
-interface EmailDraftActionProps {
+interface EmailDraftCardProps {
   deliverable: Deliverable;
   isUnread: boolean;
-  notification: Notification;
+  notification?: Notification;
   onExecuteAction?: (actionType: string) => Promise<boolean>;
+  mode?: DeliverableMode;
 }
 
 // ═══════════════════════════════════════════
 //  Component
 // ═══════════════════════════════════════════
 
-export function EmailDraftAction({
+export function EmailDraftCard({
   deliverable,
   isUnread,
   notification,
   onExecuteAction,
-}: EmailDraftActionProps) {
+  mode = "full",
+}: EmailDraftCardProps) {
   const [status, setStatus] = useState<ActionStatus>("idle");
   const [successMsg, setSuccessMsg] = useState("");
-  const meta = (deliverable.metadata || {}) as Record<string, string>;
+  const meta = (deliverable.metadata || {}) as unknown as EmailDraftMetadata;
 
   const to = meta.to || "";
   const cc = meta.cc || "";
@@ -97,13 +97,31 @@ export function EmailDraftAction({
     }
   };
 
+  // ── Compact mode: minimal summary for chat ──
+  if (mode === "compact") {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-border/30 bg-muted/15 px-3 py-2 mt-2">
+        <Icon icon="logos:google-gmail" className="w-[13px] h-[13px] shrink-0" />
+        <span className="text-[12px] font-medium text-foreground/65 truncate">
+          Draft: {subject || "No subject"}
+        </span>
+        {to && (
+          <span className="text-[11px] text-muted-foreground/30 truncate shrink-0">
+            → {to}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  // ── Full mode: complete Gmail-like panel ──
   return (
     <div
       className={`rounded-xl border overflow-hidden bg-background shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] transition-all duration-200 ${
         isUnread ? "border-border/60" : "border-border/30"
       }`}
     >
-      {/* ── Header: Official Gmail Look ── */}
+      {/* Header: Official Gmail Look */}
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border/40">
         <Icon icon="logos:google-gmail" className="w-[15px] h-[15px] drop-shadow-sm" />
         <span className="text-[13px] font-medium text-foreground/85">
@@ -111,9 +129,8 @@ export function EmailDraftAction({
         </span>
       </div>
 
-      {/* ── Email fields ── */}
+      {/* Email fields */}
       <div className="px-4 pt-3 pb-1 space-y-2">
-        {/* To */}
         {to && (
           <FieldRow label="To">
             <span className="text-[13px] text-foreground/60 break-all">
@@ -127,7 +144,6 @@ export function EmailDraftAction({
           </FieldRow>
         )}
 
-        {/* Subject */}
         {subject && (
           <FieldRow label="Subject">
             <span
@@ -140,7 +156,6 @@ export function EmailDraftAction({
           </FieldRow>
         )}
 
-        {/* Body */}
         {body && (
           <FieldRow label="Body" alignTop>
             <div
@@ -154,7 +169,7 @@ export function EmailDraftAction({
         )}
       </div>
 
-      {/* ── Action bar ── */}
+      {/* Action bar */}
       <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-border/40 bg-muted/10">
         {isSuccessState ? (
           <div className="flex items-center gap-1.5 text-[13px] font-medium text-emerald-600 dark:text-emerald-500 animate-in fade-in duration-300">
@@ -200,9 +215,6 @@ export function EmailDraftAction({
 //  Sub-components
 // ═══════════════════════════════════════════
 
-
-
-/** Label-value field row */
 function FieldRow({
   label,
   alignTop,

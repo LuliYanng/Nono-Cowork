@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { EmailDraftAction } from "./actions";
+import { getDeliverableComponent } from "./deliverables";
 import {
   Mail,
   Clock as ClockIcon,
@@ -188,20 +188,23 @@ function DeliverableCard({
   notification: Notification;
   onExecuteAction?: (actionType: string) => Promise<boolean>;
 }) {
-  // Route to specialized action component if available
-  switch (deliverable.type) {
-    case "email_draft":
-      return (
-        <EmailDraftAction
-          deliverable={deliverable}
-          isUnread={isUnread}
-          notification={notification}
-          onExecuteAction={onExecuteAction}
-        />
-      );
-    default:
-      return <GenericDeliverableCard deliverable={deliverable} isUnread={isUnread} />;
+  // Registry-based routing — new types only need registration in deliverables/registry.ts
+  const SpecializedComponent = getDeliverableComponent(deliverable.type);
+
+  if (SpecializedComponent) {
+    return (
+      <SpecializedComponent
+        deliverable={deliverable}
+        isUnread={isUnread}
+        notification={notification}
+        onExecuteAction={onExecuteAction}
+        mode="full"
+      />
+    );
   }
+
+  // Fallback for unknown types
+  return <GenericDeliverableCard deliverable={deliverable} isUnread={isUnread} />;
 }
 
 // ═══════════════════════════════════════════
@@ -320,7 +323,7 @@ export function NotificationCard({
             className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11.5px] font-medium text-muted-foreground/40 hover:text-foreground/65 hover:bg-muted/30 transition-colors"
           >
             <MessageSquare size={12} />
-            <span>继续对话</span>
+            <span>Continue</span>
           </button>
         )}
 
@@ -333,7 +336,7 @@ export function NotificationCard({
             className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11.5px] font-medium text-muted-foreground/30 hover:text-foreground/55 hover:bg-muted/30 transition-colors"
           >
             <EyeOff size={12} />
-            <span>忽略</span>
+            <span>Dismiss</span>
           </button>
         )}
 

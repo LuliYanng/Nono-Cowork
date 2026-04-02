@@ -8,6 +8,17 @@ declare global {
       minimize: () => void;
       maximize: () => void;
       close: () => void;
+      // File system operations (deliverable components)
+      openFile: (path: string) => Promise<{ success: boolean; error?: string }>;
+      openFolder: (path: string) => Promise<{ success: boolean; error?: string }>;
+      showInExplorer: (path: string) => Promise<{ success: boolean; error?: string }>;
+      // Local Syncthing query (zero-config path mapping)
+      syncthingLocalFolders: () => Promise<{
+        success: boolean;
+        folders: Array<{ id: string; label: string; path: string }>;
+        error?: string;
+      }>;
+      getPlatform: () => string;
     };
   }
 }
@@ -44,6 +55,7 @@ import { Sidebar, type SessionItem, type SidebarView } from "@/components/sideba
 import { type Notification } from "@/components/notification-card";
 import { WorkspacePage } from "@/components/workspace-page";
 import { RoutinesPage } from "@/components/routines-page";
+import { syncPaths, FileCard } from "@/components/deliverables";
 import {
   Context,
   ContextTrigger,
@@ -293,6 +305,12 @@ function PartsRenderer({
           </button>
         ) : undefined;
 
+      // Detect file operations for enhanced rendering
+      const toolName = part.toolName || "";
+      const FILE_TOOLS = ["write_file", "edit_file", "read_file", "create_file"];
+      const isFileOp = FILE_TOOLS.includes(toolName);
+      const filePath = (part.args?.path || part.args?.file_path || part.args?.target_file) as string | undefined;
+
       items.push(
         <Tool key={`t-${i}`} defaultOpen={shouldOpen}>
           <ToolHeader
@@ -307,6 +325,14 @@ function PartsRenderer({
             )}
             {hasResult && nextPart && nextPart.type === "tool_result" && (
               <ToolOutput output={nextPart.result} errorText={undefined} />
+            )}
+            {/* File operation: render compact FileCard after tool output */}
+            {isFileOp && hasResult && filePath && (
+              <FileCard
+                path={filePath}
+                action={toolName === "write_file" || toolName === "create_file" ? "created" : "modified"}
+                mode="compact"
+              />
             )}
           </ToolContent>
         </Tool>
@@ -353,7 +379,7 @@ function App() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Health check on mount
+  // Health check + syncPaths init on mount
   useEffect(() => {
     fetch(`${API_BASE}/api/health`, { headers: authHeaders() })
       .then((r) => r.json())
@@ -361,6 +387,9 @@ function App() {
         setSessionStatus((prev) => ({ ...prev, model: data.model }));
       })
       .catch(() => {});
+
+    // Initialize sync path resolver (for file deliverable components)
+    syncPaths.init(API_BASE, authHeaders());
   }, []);
 
   // Keyboard shortcuts
