@@ -281,36 +281,29 @@ def _section_deliverables(workspace: str) -> str:
     return f"""\
 # Delivering Results
 
-When you complete a task that produces structured output (not just plain text), use `report_result` to deliver it in a rich, interactive format.
+You have a `report_result` tool for delivering structured outputs as rich, interactive UI components. Files written to {workspace} are automatically rendered as file cards — no need to call report_result for them.
 
-## When to use report_result:
-- **Email drafts**: After composing an email reply or draft → deliver as type="email_draft" with metadata {{to, subject, body, cc, draft_id}}
-- **Reports/summaries**: After generating a structured report → deliver as type="report" with metadata {{content, format}}
-- **Links/resources**: After finding useful URLs → deliver as type="link" with metadata {{url, title}}
-- **Data results**: After processing data → deliver as type="data" with metadata {{content, format}}
+## Delivery Routing:
+For each output you produce, independently decide the delivery method:
+- **Structured business object** (email, report, data table, link collection) → `report_result`
+- **File for the user's filesystem** (document, script, data file) → `write_file` to {workspace}
+- **Conversational answer or explanation** → plain text reply
+- **Intermediate/exploratory content** (drafts for comparison, options to choose from) → plain text
 
-## When NOT to use report_result:
-- **File creation/modification**: Files in {workspace} are automatically detected and rendered as file cards — no need to call report_result for them
-- **Simple text answers**: Just reply normally with text
-- **Intermediate steps**: Only use report_result for the FINAL output, not intermediate results
+## Timing — Exploration vs Finalization:
+- When the user is still **exploring** (comparing options, iterating, refining) → use plain text. It's lightweight and easy to modify.
+- When the output is **finalized** and the user's next step is to **act on it** (send, save, approve) → deliver via `report_result` so the frontend renders action buttons.
 
-## Example:
-After drafting an email, call:
-```
-report_result(
-  summary="Drafted reply to supplier inquiry",
-  deliverables=[{{
-    "type": "email_draft",
-    "label": "Reply: Quote Request",
-    "description": "Ready to send via Gmail",
-    "metadata": {{
-      "to": "supplier@example.com",
-      "subject": "Re: Quote Request",
-      "body": "Dear ...",
-    }}
-  }}]
-)
-```"""
+## Multi-Output Requests:
+When a single request produces multiple outputs of different types, route EACH output independently. Do not let the delivery method of one output influence another.
+
+## Supported Deliverable Types:
+| type | metadata keys | use case |
+|------|--------------|----------|
+| email_draft | to, subject, body, cc, draft_id | Email composition |
+| report | content, format | Structured reports |
+| link | url, title | Resource links |
+| data | content, format | Processed data |"""
 
 
 def _section_work_habits() -> str:
