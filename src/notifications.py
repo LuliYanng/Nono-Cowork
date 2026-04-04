@@ -528,11 +528,8 @@ class NotificationStore:
         }
 
         # Always push to Desktop SSE (real-time)
-        # Desktop subscribes as OWNER_USER_ID, but triggers may use IM user IDs.
-        # Publish to both to ensure delivery.
-        _pubsub.publish(user_id, sse_event)
-        if OWNER_USER_ID and OWNER_USER_ID != user_id:
-            _pubsub.publish(OWNER_USER_ID, sse_event)
+        # Single-owner system: always publish to OWNER_USER_ID
+        _pubsub.publish(OWNER_USER_ID, sse_event)
         notification["delivered_channels"].append("desktop")
 
         # Optional: push to IM channels (summary only — they can't render cards)

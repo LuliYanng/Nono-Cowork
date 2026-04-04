@@ -7,7 +7,7 @@ Each task is a dict with:
   - task_name: str (human-readable name)
   - cron: str (cron expression, e.g. "0 9 * * *")
   - task_prompt: str (natural language instruction for the Agent)
-  - user_id: str (owner)
+  - channel_user_id: str (IM-specific delivery target, e.g., feishu ou_xxx)
   - channel_name: str (which IM channel to push results to)
   - enabled: bool
   - created_at: str (ISO timestamp)
@@ -58,7 +58,7 @@ def _save_all(tasks: list[dict]):
 # ── Public API ──
 
 def create_task(task_name: str, cron: str, task_prompt: str,
-                user_id: str, channel_name: str,
+                channel_user_id: str, channel_name: str,
                 tool_access: str = "full", model: str = "") -> dict:
     """Create and persist a new scheduled task. Returns the task dict."""
     task = {
@@ -66,7 +66,7 @@ def create_task(task_name: str, cron: str, task_prompt: str,
         "task_name": task_name,
         "cron": cron,
         "task_prompt": task_prompt,
-        "user_id": user_id,
+        "channel_user_id": channel_user_id,
         "channel_name": channel_name,
         "tool_access": tool_access,
         "model": model,
@@ -92,12 +92,12 @@ def get_task(task_id: str) -> dict | None:
     return None
 
 
-def list_tasks(user_id: str = None) -> list[dict]:
-    """List tasks, optionally filtered by user_id."""
+def list_tasks(channel_user_id: str = None) -> list[dict]:
+    """List tasks, optionally filtered by channel_user_id."""
     with _lock:
         tasks = _load_all()
-    if user_id:
-        tasks = [t for t in tasks if t["user_id"] == user_id]
+    if channel_user_id:
+        tasks = [t for t in tasks if t.get("channel_user_id") == channel_user_id]
     return tasks
 
 

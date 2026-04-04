@@ -947,7 +947,7 @@ async def create_task_api(request: Request):
             task_name=task_name,
             cron=cron,
             task_prompt=task_prompt,
-            user_id=DESKTOP_USER_ID,
+            channel_user_id=DESKTOP_USER_ID,
             channel_name=channel_name,
             model=model,
             tool_access=tool_access,
@@ -1096,7 +1096,7 @@ async def list_triggers_api():
             "agent_prompt": recipe.get("agent_prompt", ""),
             "model": recipe.get("model", ""),
             "trigger_config": recipe.get("trigger_config"),
-            "user_id": recipe.get("user_id", ""),
+            "channel_user_id": recipe.get("channel_user_id", recipe.get("user_id", "")),
             "channel_name": recipe.get("channel_name", ""),
             "tool_access": recipe.get("tool_access", "full"),
             "created_at": recipe.get("created_at", ""),
@@ -1124,7 +1124,7 @@ async def get_trigger_api(trigger_id: str):
         "agent_prompt": recipe.get("agent_prompt", ""),
         "model": recipe.get("model", ""),
         "trigger_config": recipe.get("trigger_config"),
-        "user_id": recipe.get("user_id", ""),
+        "channel_user_id": recipe.get("channel_user_id", recipe.get("user_id", "")),
         "channel_name": recipe.get("channel_name", ""),
         "tool_access": recipe.get("tool_access", "full"),
         "created_at": recipe.get("created_at", ""),
@@ -1257,9 +1257,12 @@ async def toggle_trigger_api(trigger_id: str):
             from composio import Composio
             from config import COMPOSIO_USER_ID
             client = Composio()
+            # Use composio_user_id (Composio-side), NOT user_id (channel-side)
+            # Fall back to COMPOSIO_USER_ID for old recipes without this field
+            cid = recipe.get("composio_user_id") or COMPOSIO_USER_ID
             trigger = client.triggers.create(
                 slug=recipe["trigger_slug"],
-                user_id=COMPOSIO_USER_ID,
+                user_id=cid,
                 trigger_config=recipe.get("trigger_config") or {},
             )
             new_id = getattr(trigger, "id", None) or getattr(trigger, "trigger_id", str(trigger))
@@ -1277,7 +1280,16 @@ async def toggle_trigger_api(trigger_id: str):
                 "message": f"Trigger re-enabled as {new_id}",
             }
         except Exception as e:
-            return JSONResponse({"error": f"Failed to enable: {str(e)}"}, status_code=500)
+            err_msg = str(e)
+            # Surface connection issues clearly — this is user-actionable, not a server bug
+            if "connected account" in err_msg.lower() or "no connected" in err_msg.lower():
+                return JSONResponse({
+                    "error": f"Connected account missing or expired for {recipe.get('trigger_slug', '')}",
+                    "error_code": "connection_missing",
+                    "details": err_msg,
+                    "trigger_slug": recipe.get("trigger_slug", ""),
+                }, status_code=400)
+            return JSONResponse({"error": f"Failed to enable: {err_msg}"}, status_code=500)
 
 
 @app.delete("/api/triggers/{trigger_id}")
@@ -1344,7 +1356,7 @@ async def list_automations_api():
             "model": t.get("model", ""),
             "tool_access": t.get("tool_access", "full"),
             "channel_name": t.get("channel_name", ""),
-            "user_id": t.get("user_id", ""),
+            "channel_user_id": t.get("channel_user_id", t.get("user_id", "")),
             "created_at": t.get("created_at", ""),
             "last_run_at": t.get("last_run_at"),
             "last_result": (t.get("last_result") or "")[:200],
@@ -1377,7 +1389,7 @@ async def list_automations_api():
                 "model": recipe.get("model", ""),
                 "tool_access": recipe.get("tool_access", "full"),
                 "channel_name": recipe.get("channel_name", ""),
-                "user_id": recipe.get("user_id", ""),
+                "channel_user_id": recipe.get("channel_user_id", recipe.get("user_id", "")),
                 "created_at": recipe.get("created_at", ""),
                 "last_run_at": None,
                 "last_result": "",

@@ -75,7 +75,7 @@ def create_scheduled_task(task_name: str, cron: str, task_prompt: str,
             task_name=task_name,
             cron=cron,
             task_prompt=task_prompt,
-            user_id=ctx["user_id"],
+            channel_user_id=ctx["user_id"],
             channel_name=ctx["channel_name"],
             tool_access=tool_access,
         )
@@ -111,7 +111,7 @@ def list_scheduled_tasks() -> str:
     from scheduler.store import list_tasks
     from scheduler.engine import scheduler
 
-    tasks = list_tasks(user_id=ctx["user_id"])
+    tasks = list_tasks()  # single-owner system, no filter needed
     if not tasks:
         return "No scheduled tasks found."
 
@@ -161,7 +161,7 @@ def delete_scheduled_task(task_id: str) -> str:
     task = get_task(task_id)
     if not task:
         return f"❌ Task '{task_id}' not found."
-    if task["user_id"] != ctx["user_id"]:
+    if task.get("channel_user_id", task.get("user_id")) != ctx["user_id"]:
         return f"❌ Task '{task_id}' does not belong to you."
 
     scheduler.remove_task(task_id)
@@ -220,7 +220,7 @@ def update_scheduled_task(task_id: str, cron: str = None,
     task = get_task(task_id)
     if not task:
         return f"❌ Task '{task_id}' not found."
-    if task["user_id"] != ctx["user_id"]:
+    if task.get("channel_user_id", task.get("user_id")) != ctx["user_id"]:
         return f"❌ Task '{task_id}' does not belong to you."
 
     # Build updates

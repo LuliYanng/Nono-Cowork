@@ -232,7 +232,7 @@ def _create_cron_routine(name, prompt, cron, model, tool_access, ctx) -> str:
             task_name=name,
             cron=cron,
             task_prompt=prompt,
-            user_id=ctx["user_id"],
+            channel_user_id=ctx["user_id"],
             channel_name=ctx["channel_name"],
             tool_access=tool_access,
             model=model,
@@ -560,9 +560,11 @@ def _toggle_trigger(id) -> str:
             from composio import Composio
             from config import COMPOSIO_USER_ID
             client = Composio()
+            # Use composio_user_id (Composio-side), NOT user_id (channel-side)
+            cid = recipe.get("composio_user_id") or COMPOSIO_USER_ID
             trigger = client.triggers.create(
                 slug=recipe["trigger_slug"],
-                user_id=COMPOSIO_USER_ID,
+                user_id=cid,
                 trigger_config=recipe.get("trigger_config") or {},
             )
             new_id = getattr(trigger, "id", None) or getattr(trigger, "trigger_id", str(trigger))
@@ -581,6 +583,14 @@ def _toggle_trigger(id) -> str:
 
             return f"✅ Trigger routine '{id}' ({recipe.get('trigger_slug', '?')}) → ✅ Active"
         except Exception as e:
+            err_msg = str(e)
+            if "connected account" in err_msg.lower() or "no connected" in err_msg.lower():
+                return (
+                    f"❌ Connected account missing or expired for '{recipe.get('trigger_slug', '?')}'.\n"
+                    f"  Trigger: {id}\n"
+                    f"  Please reconnect the app in Composio and try again.\n"
+                    f"  Details: {err_msg}"
+                )
             return f"❌ Failed to re-enable: {e}"
 
 

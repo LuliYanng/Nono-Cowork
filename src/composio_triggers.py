@@ -304,7 +304,6 @@ def _handle_trigger_event(data):
             # Look up the trigger recipe (agent_prompt)
             recipe = _find_recipe_by_trigger_id(trigger_id) or _find_recipe_by_slug(trigger_slug)
             base_prompt = (recipe or {}).get("agent_prompt") or _DEFAULT_TRIGGER_PROMPT
-            recipe_user_id = (recipe or {}).get("user_id") or user_id
             model = (recipe or {}).get("model", "")
 
             # Always append REPORT_RESULT_PROMPT so agent outputs structured JSON
@@ -317,8 +316,10 @@ def _handle_trigger_event(data):
             tool_access = (recipe or {}).get("tool_access")
 
             # Process the event via subagent with full history capture
+            # Use OWNER_USER_ID for notification routing (single-owner system)
+            from config import OWNER_USER_ID
             result = _run_autonomous_agent(
-                agent_prompt, event_data, trigger_slug, trigger_id, recipe_user_id,
+                agent_prompt, event_data, trigger_slug, trigger_id, OWNER_USER_ID,
                 deliver_to_channels=(recipe or {}).get("channel_name"),
                 model=model,
                 tool_access=tool_access,
@@ -488,7 +489,6 @@ def create_trigger(trigger_slug: str, agent_prompt: str = None,
         # so _handle_trigger_event can look it up later
         from context import get_context
         ctx = get_context()
-        current_user_id = ctx.get("user_id", COMPOSIO_USER_ID)
 
         recipes = _load_recipes()
         recipes[trigger_id] = {
@@ -498,7 +498,11 @@ def create_trigger(trigger_slug: str, agent_prompt: str = None,
             "model": model,
             "tool_access": tool_access,
             "trigger_config": trigger_config,
-            "user_id": current_user_id,
+            # composio_user_id: the Composio-side user_id used to create the trigger
+            # (must match the connected account on Composio)
+            "composio_user_id": COMPOSIO_USER_ID,
+            # channel_user_id: IM-specific delivery target (e.g., feishu ou_xxx, telegram chat_id)
+            "channel_user_id": ctx.get("user_id", ""),
             "channel_name": ctx.get("channel_name", ""),
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }

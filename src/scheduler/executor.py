@@ -39,8 +39,13 @@ def _run_task(task: dict):
     task_id = task["id"]
     task_name = task["task_name"]
     task_prompt = task["task_prompt"]
-    user_id = task["user_id"]
+    # channel_user_id: IM-specific target (feishu ou_xxx, telegram chat_id)
+    channel_user_id = task.get("channel_user_id", task.get("user_id", ""))
     channel_name = task["channel_name"]
+
+    # For notification routing, use OWNER_USER_ID (single-owner system)
+    from config import OWNER_USER_ID
+    notify_user_id = OWNER_USER_ID
 
     logger.info(f"Executing scheduled task: {task_id} ({task_name})")
 
@@ -54,7 +59,7 @@ def _run_task(task: dict):
                 break
 
     if channel:
-        channel.send_status(user_id, f"⏰ Scheduled task 「{task_name}」 is running...")
+        channel.send_status(channel_user_id, f"⏰ Scheduled task 「{task_name}」 is running...")
 
     # Create a fresh Agent session for this task
     log_file = create_log_file()
@@ -62,7 +67,7 @@ def _run_task(task: dict):
         "type": "scheduled_task_start",
         "task_id": task_id,
         "task_name": task_name,
-        "user_id": user_id,
+        "user_id": notify_user_id,
     })
 
     system_prompt = make_system_prompt()
@@ -143,7 +148,7 @@ def _run_task(task: dict):
         _store_notification(
             task_id=task_id,
             task_name=task_name,
-            user_id=user_id,
+            user_id=notify_user_id,
             body=final_reply,
             history=serialized,
             token_stats=dict(updated_stats),
@@ -171,7 +176,7 @@ def _run_task(task: dict):
         logger.error(error_msg, exc_info=True)
         # Direct delivery for errors (NotificationStore might also be broken)
         if channel:
-            channel.send_reply(user_id, error_msg)
+            channel.send_reply(channel_user_id, error_msg)
         update_task(
             task_id,
             last_run_at=datetime.now(timezone.utc).isoformat(),
@@ -226,7 +231,7 @@ def _store_notification(
                         break
             if channel:
                 header = f"📋 Scheduled Task 「{task_name}」 Result:\n\n"
-                channel.send_reply(user_id, header + body)
+                channel.send_reply(channel_user_id, header + body)
         except Exception as e2:
             logger.error("Fallback delivery also failed: %s", e2)
 
