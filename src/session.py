@@ -100,6 +100,9 @@ class SessionManager:
 
         On first call after startup, tries to restore the most recent
         session from disk. If none found, creates a fresh session.
+
+        NOTE: This does NOT update last_active.  last_active is only
+        updated explicitly when a user sends a message (touch_session).
         """
         with self._global_lock:
             if user_id not in self._sessions:
@@ -112,9 +115,14 @@ class SessionManager:
                 else:
                     self._sessions[user_id] = self._create_new_session(user_id)
 
-            session = self._sessions[user_id]
-            session["last_active"] = time.time()
-            return session
+            return self._sessions[user_id]
+
+    def touch_session(self, user_id: str):
+        """Update last_active timestamp. Call when user actually sends a message."""
+        with self._global_lock:
+            session = self._sessions.get(user_id)
+            if session:
+                session["last_active"] = time.time()
 
     def _create_new_session(self, user_id: str) -> dict:
         """Create a brand new session."""
@@ -365,7 +373,11 @@ class SessionManager:
             }
 
     def list_sessions(self, user_id: str) -> list[dict]:
-        """List all saved sessions for a user, sorted by last_active (newest first)."""
+        """List all saved sessions for a user, sorted by last_active (newest first).
+
+        Empty sessions (only a system prompt, no user messages) are excluded
+        from the listing to keep the history clean.
+        """
         results = []
         if not os.path.isdir(SESSIONS_DIR):
             return results
@@ -380,10 +392,17 @@ class SessionManager:
                 if data.get("user_id") == user_id:
                     # Get first user message as preview
                     preview = ""
+                    has_user_msg = False
                     for msg in data.get("history", []):
                         if msg.get("role") == "user":
-                            preview = msg["content"][:60]
+                            if not preview:
+                                preview = msg["content"][:60]
+                            has_user_msg = True
                             break
+
+                    # Skip empty sessions (no user messages)
+                    if not has_user_msg:
+                        continue
 
                     results.append({
                         "id": data["id"],

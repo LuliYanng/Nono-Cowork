@@ -28,6 +28,7 @@ interface SidebarProps {
   onToggle: () => void;
   onNewChat: () => void;
   sessions: SessionItem[];
+  currentSessionId: string | null;
   onSelectSession: (id: string) => void;
   onDeleteSession?: (id: string) => void;
   // View switching
@@ -73,6 +74,7 @@ export function Sidebar({
   onToggle,
   onNewChat,
   sessions,
+  currentSessionId,
   onSelectSession,
   onDeleteSession,
   activeView,
@@ -197,7 +199,9 @@ export function Sidebar({
                       <div className="ml-6 py-1 text-[10px] font-semibold text-sidebar-foreground/35 uppercase tracking-wider">
                         {group}
                       </div>
-                      {items.map((s) => (
+                      {items.map((s) => {
+                        const isCurrent = s.id === currentSessionId;
+                        return (
                         <div
                           key={s.id}
                           className="relative ml-5 mr-3"
@@ -206,18 +210,18 @@ export function Sidebar({
                         >
                           <button
                             onClick={() => {
-                              if (!s.is_current) onSelectSession(s.id);
+                              if (!isCurrent) onSelectSession(s.id);
                               onViewChange("chat");
                             }}
                             className={`w-full text-left px-3 py-1.5 rounded-lg text-[13px] truncate transition-colors pr-8 ${
-                              s.is_current && activeView === "chat"
+                              isCurrent && activeView === "chat"
                                 ? "bg-sidebar-accent text-sidebar-foreground/90"
                                 : "text-sidebar-foreground/55 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80"
                             }`}
                           >
                             {s.preview || "New conversation"}
                           </button>
-                          {onDeleteSession && hoveredId === s.id && !s.is_current && (
+                          {onDeleteSession && hoveredId === s.id && !isCurrent && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -230,7 +234,8 @@ export function Sidebar({
                             </button>
                           )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ))
                 )}

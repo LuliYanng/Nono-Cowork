@@ -66,6 +66,8 @@ def run_agent_for_message(user_id: str, user_text: str,
 
         # Append ORIGINAL user message to history (this is what gets persisted & shown in frontend)
         history.append({"role": "user", "content": user_text})
+        # Update last_active only when user actually sends a message
+        sessions.touch_session(user_id)
         # Log the original text to session log file
         log_event(log_file, {
             "type": f"{channel_name}_message",

@@ -363,6 +363,7 @@ function App() {
   const [thinkingMsgId, setThinkingMsgId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sessionList, setSessionList] = useState<SessionItem[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<AvailableModels>([]);
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   // Track whether a stop request has been sent (for immediate UI feedback)
@@ -451,7 +452,13 @@ function App() {
     try {
       const res = await fetch(`${API_BASE}/api/sessions`, { headers: authHeaders() });
       const data = await res.json();
-      setSessionList(data.sessions || []);
+      const list = data.sessions || [];
+      setSessionList(list);
+      // Sync currentSessionId from server if not yet set
+      const serverCurrent = list.find((s: SessionItem) => s.is_current);
+      if (serverCurrent) {
+        setCurrentSessionId((prev) => prev || serverCurrent.id);
+      }
     } catch {
       // ignore
     }
@@ -460,6 +467,9 @@ function App() {
   // Switch to a different conversation
   const handleSwitchSession = useCallback(async (sessionId: string) => {
     if (isStreaming) return;
+
+    // Immediately update highlight — no waiting for server
+    setCurrentSessionId(sessionId);
 
     // Show skeleton immediately for instant visual feedback
     setLoadingSession(true);
@@ -842,6 +852,7 @@ function App() {
           isOpen={sidebarOpen}
           onToggle={() => setSidebarOpen((p) => !p)}
           sessions={sessionList}
+          currentSessionId={currentSessionId}
           onSelectSession={(id) => {
             handleSwitchSession(id);
             setActiveView("chat");
@@ -850,15 +861,36 @@ function App() {
           onViewChange={setActiveView}
           unreadCount={unreadCount}
           onNewChat={async () => {
+            // If already on an empty session (no user messages), just switch to chat view
+            const hasUserMessages = messages.some((m) => m.role === "user");
+            if (!hasUserMessages && activeView === "chat") return;
+            if (!hasUserMessages && activeView !== "chat") {
+              // Already empty, just switch view
+              return;
+            }
             try {
-              await fetch(`${API_BASE}/api/sessions`, {
+              const res = await fetch(`${API_BASE}/api/sessions`, {
                 method: "POST",
                 headers: authHeaders(),
               });
+              const data = await res.json();
+              // Track new session as current (it won't appear in history until it has messages)
+              if (data.session_id) setCurrentSessionId(data.session_id);
               setMessages([]);
               setIsStopping(false);
               refreshStatus();
               fetchSessions();
+            } catch { /* ignore */ }
+          }}
+          onDeleteSession={async (id) => {
+            try {
+              const res = await fetch(`${API_BASE}/api/sessions/${id}`, {
+                method: "DELETE",
+                headers: authHeaders(),
+              });
+              if (res.ok) {
+                fetchSessions();
+              }
             } catch { /* ignore */ }
           }}
         />

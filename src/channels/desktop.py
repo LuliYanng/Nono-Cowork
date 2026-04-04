@@ -302,6 +302,10 @@ async def chat(request: Request):
 @app.get("/api/sessions")
 async def list_sessions():
     """List all saved sessions for the desktop user."""
+    # Ensure there is always an active session in memory so get_status works
+    # (on server restart, _sessions is empty until get_or_create is called)
+    sessions.get_or_create(DESKTOP_USER_ID)
+
     saved = sessions.list_sessions(DESKTOP_USER_ID)
 
     # Mark which session is currently active
