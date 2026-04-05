@@ -893,6 +893,169 @@ async def get_sync_config():
         return {"folders": []}
 
 
+@app.post("/api/sync/pair")
+async def sync_pair(request: Request):
+    """Auto-pair: desktop sends its Syncthing Device ID, VPS adds it and returns its own.
+
+    This enables zero-input Syncthing pairing by using the existing
+    authenticated API connection as the trust channel.
+
+    Body: {
+        device_id: str,         # Desktop's Syncthing Device ID
+        device_name: str,       # Optional display name (default: "Desktop Client")
+    }
+
+    Returns: {
+        vps_device_id: str,
+        folders: [{id, label, path}],
+        paired: bool,
+    }
+    """
+    try:
+        from tools.syncthing import SyncthingClient
+        st = SyncthingClient()
+
+        body = await request.json()
+        desktop_device_id = body.get("device_id", "").strip()
+        desktop_name = body.get("device_name", "Desktop Client")
+
+        if not desktop_device_id:
+            return JSONResponse({"error": "Missing 'device_id'"}, status_code=400)
+
+        # 1. Get VPS's own Device ID
+        status = st.get_system_status()
+        vps_device_id = status["myID"]
+
+        # 2. Get current config to check existing devices
+        config = st._get("/rest/config")
+        existing_ids = {d["deviceID"] for d in config.get("devices", [])}
+
+        # 3. Add desktop device if not already present
+        if desktop_device_id not in existing_ids:
+            st._post_json("/rest/config/devices", {
+                "deviceID": desktop_device_id,
+                "name": desktop_name,
+                "autoAcceptFolders": True,
+            })
+            logger.info("Paired new desktop device: %s (%s)", desktop_name, desktop_device_id[:12])
+
+        # 4. Ensure all shared folders include the desktop device
+        folders = st.get_folders()
+        folder_info = []
+        for f in folders:
+            folder_info.append({
+                "id": f["id"],
+                "label": f.get("label", f["id"]),
+                "path": f["path"],
+            })
+            device_ids = {d["deviceID"] for d in f.get("devices", [])}
+            if desktop_device_id not in device_ids:
+                devices = list(f.get("devices", []))
+                devices.append({"deviceID": desktop_device_id})
+                st._patch(f"/rest/config/folders/{f['id']}", {"devices": devices})
+                logger.info("Added desktop device to folder: %s", f["id"])
+
+        return {
+            "vps_device_id": vps_device_id,
+            "folders": folder_info,
+            "paired": True,
+        }
+    except Exception as e:
+        logger.error("Sync pair failed: %s", e)
+        return JSONResponse(
+            {"error": f"Syncthing pairing failed: {str(e)}", "paired": False},
+            status_code=503,
+        )
+
+
+@app.get("/api/sync/status")
+async def get_sync_status():
+    """Return real-time Syncthing sync status for the frontend indicator.
+
+    Returns: {
+        online: bool,           # Is Syncthing reachable?
+        device_id: str,         # VPS Device ID (for display/debug)
+        connections: {          # Connected desktop devices
+            total: int,
+            connected: int,
+            devices: [{id, name, connected, address}]
+        },
+        folders: [{             # Per-folder sync status
+            id, label, state,   # state: "idle" | "syncing" | "error"
+            completion: float,  # 0-100 percent
+        }],
+    }
+    """
+    try:
+        from tools.syncthing import SyncthingClient
+        st = SyncthingClient()
+
+        # System status
+        sys_status = st.get_system_status()
+        device_id = sys_status.get("myID", "")
+
+        # Connections
+        conn_data = st.get_connections()
+        connections_map = conn_data.get("connections", {})
+        devices = []
+        connected_count = 0
+        for did, info in connections_map.items():
+            if did == device_id:
+                continue  # Skip self
+            is_connected = info.get("connected", False)
+            if is_connected:
+                connected_count += 1
+            devices.append({
+                "id": did,
+                "name": info.get("name", did[:12]),
+                "connected": is_connected,
+                "address": info.get("address", ""),
+            })
+
+        # Folder status
+        folders = st.get_folders()
+        folder_statuses = []
+        for f in folders:
+            try:
+                fs = st.get_folder_status(f["id"])
+                state = fs.get("state", "unknown")
+                # Calculate completion percentage
+                global_bytes = fs.get("globalBytes", 0)
+                in_sync_bytes = fs.get("inSyncBytes", 0)
+                completion = (in_sync_bytes / global_bytes * 100) if global_bytes > 0 else 100.0
+
+                folder_statuses.append({
+                    "id": f["id"],
+                    "label": f.get("label", f["id"]),
+                    "state": state,
+                    "completion": round(completion, 1),
+                })
+            except Exception:
+                folder_statuses.append({
+                    "id": f["id"],
+                    "label": f.get("label", f["id"]),
+                    "state": "error",
+                    "completion": 0,
+                })
+
+        return {
+            "online": True,
+            "device_id": device_id,
+            "connections": {
+                "total": len(devices),
+                "connected": connected_count,
+                "devices": devices,
+            },
+            "folders": folder_statuses,
+        }
+    except Exception:
+        return {
+            "online": False,
+            "device_id": "",
+            "connections": {"total": 0, "connected": 0, "devices": []},
+            "folders": [],
+        }
+
 # ══════════════════════════════════════════════
 # RESTful: Automations (Cron Tasks + Triggers)
 # ══════════════════════════════════════════════

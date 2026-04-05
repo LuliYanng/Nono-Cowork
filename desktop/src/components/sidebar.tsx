@@ -8,7 +8,12 @@ import {
   ChevronRight,
   LayoutDashboard,
   Repeat,
+  Cloud,
+  CloudOff,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
+import type { SyncState } from "@/hooks/use-sync-status";
 
 // ── Types ──
 
@@ -36,6 +41,10 @@ interface SidebarProps {
   onViewChange: (view: SidebarView) => void;
   // Notifications badge
   unreadCount: number;
+  // Sync status
+  syncState?: SyncState;
+  // Settings
+  onSettingsOpen?: () => void;
 }
 
 // ── Date grouping ──
@@ -69,6 +78,15 @@ function groupByDate(sessions: SessionItem[]): [string, SessionItem[]][] {
 
 // ── Component ──
 
+// ── Sync status config ──
+
+const SYNC_INDICATOR: Record<SyncState, { icon: typeof Cloud; label: string; color: string; animate?: boolean }> = {
+  connected:    { icon: Cloud,    label: "Synced",        color: "text-emerald-500" },
+  syncing:      { icon: RefreshCw, label: "Syncing...",   color: "text-blue-400",    animate: true },
+  disconnected: { icon: CloudOff, label: "Disconnected", color: "text-sidebar-foreground/30" },
+  loading:      { icon: Loader2,  label: "Connecting...", color: "text-sidebar-foreground/30", animate: true },
+};
+
 export function Sidebar({
   isOpen,
   onToggle,
@@ -80,6 +98,8 @@ export function Sidebar({
   activeView,
   onViewChange,
   unreadCount,
+  syncState = "loading",
+  onSettingsOpen,
 }: SidebarProps) {
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -244,9 +264,32 @@ export function Sidebar({
           </div>
         </div>
 
-        {/* Settings */}
-        <div className="mt-auto px-3 py-3 border-t border-sidebar-border shrink-0">
-          <button className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-[13px] text-sidebar-foreground/40 hover:bg-sidebar-accent hover:text-sidebar-foreground/70 transition-colors">
+        {/* Footer: Sync status + Settings */}
+        <div className="mt-auto px-3 py-2 border-t border-sidebar-border shrink-0 space-y-0.5">
+          {/* Sync status indicator */}
+          {(() => {
+            const cfg = SYNC_INDICATOR[syncState];
+            const Icon = cfg.icon;
+            return (
+              <div className={`flex items-center gap-2.5 w-full px-3 py-1.5 rounded-lg text-[12px] ${cfg.color} transition-colors`}>
+                <Icon
+                  size={14}
+                  strokeWidth={1.5}
+                  className={cfg.animate ? "animate-spin" : ""}
+                />
+                <span>{cfg.label}</span>
+                {syncState === "connected" && (
+                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Settings */}
+          <button
+            onClick={onSettingsOpen}
+            className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-[13px] text-sidebar-foreground/40 hover:bg-sidebar-accent hover:text-sidebar-foreground/70 transition-colors"
+          >
             <Settings size={15} strokeWidth={1.5} />
             <span>Settings</span>
           </button>

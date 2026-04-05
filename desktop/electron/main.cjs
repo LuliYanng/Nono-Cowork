@@ -1,6 +1,36 @@
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
+// ── Local config persistence ──
+// Stores { apiBase, apiToken } in userData directory
+function getConfigPath() {
+  return path.join(app.getPath('userData'), 'nono-config.json');
+}
+
+function readConfig() {
+  try {
+    const configPath = getConfigPath();
+    if (fs.existsSync(configPath)) {
+      return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    }
+  } catch (err) {
+    console.error('Failed to read config:', err.message);
+  }
+  return null;
+}
+
+function writeConfig(config) {
+  try {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+    return true;
+  } catch (err) {
+    console.error('Failed to write config:', err.message);
+    return false;
+  }
+}
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1000,
@@ -121,6 +151,22 @@ function createWindow() {
     } catch (err) {
       return { success: false, folders: [], error: err.message };
     }
+  });
+
+  // ── App config IPC (local persistence for VPS connection) ──
+
+  ipcMain.handle('get-app-config', async () => {
+    return readConfig() || {};
+  });
+
+  ipcMain.handle('save-app-config', async (_event, config) => {
+    const ok = writeConfig(config);
+    return { success: ok };
+  });
+
+  ipcMain.handle('reload-window', async () => {
+    mainWindow.webContents.reload();
+    return { success: true };
   });
 
   // Open external links in default browser instead of new Electron window

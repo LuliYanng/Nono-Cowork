@@ -14,6 +14,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Local Syncthing query (for zero-config path mapping)
   syncthingLocalFolders: () => ipcRenderer.invoke('syncthing-local-folders'),
 
+  // App config (VPS connection persistence)
+  getAppConfig: () => ipcRenderer.invoke('get-app-config'),
+  saveAppConfig: (config) => ipcRenderer.invoke('save-app-config', config),
+  reloadWindow: () => ipcRenderer.invoke('reload-window'),
+
   // Platform info (for path mapping)
   getPlatform: () => process.platform,
 });

@@ -56,6 +56,8 @@ import { type Notification, type Deliverable } from "@/components/notification-c
 import { WorkspacePage } from "@/components/workspace-page";
 import { RoutinesPage } from "@/components/routines-page";
 import { syncPaths, FileCard, getDeliverableComponent } from "@/components/deliverables";
+import { useSyncStatus } from "@/hooks/use-sync-status";
+import { SettingsDialog } from "@/components/settings-dialog";
 import {
   Context,
   ContextTrigger,
@@ -223,9 +225,20 @@ interface SessionStatus {
 }
 
 // ── Config ──
+// Defaults from .env, can be overridden by saved Electron config
+let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080";
+let API_TOKEN = import.meta.env.VITE_API_TOKEN || "";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080";
-const API_TOKEN = import.meta.env.VITE_API_TOKEN || "";
+// Load saved config from Electron (called once on mount)
+async function loadSavedConfig() {
+  const electron = (window as any).electronAPI;
+  if (!electron?.getAppConfig) return;
+  try {
+    const config = await electron.getAppConfig();
+    if (config?.apiBase) API_BASE = config.apiBase;
+    if (config?.apiToken) API_TOKEN = config.apiToken;
+  } catch { /* ignore in browser dev */ }
+}
 
 // Helper: build headers with optional Bearer token
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -374,17 +387,26 @@ function App() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Health check + syncPaths init on mount
-  useEffect(() => {
-    fetch(`${API_BASE}/api/health`, { headers: authHeaders() })
-      .then((r) => r.json())
-      .then((data) => {
-        setSessionStatus((prev) => ({ ...prev, model: data.model }));
-      })
-      .catch(() => {});
+  // Sync status (sidebar indicator)
+  const { state: syncState } = useSyncStatus(API_BASE, () => authHeaders());
 
-    // Initialize sync path resolver (for file deliverable components)
-    syncPaths.init(API_BASE, authHeaders());
+  // Settings dialog
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Load saved config on mount (before health check)
+  useEffect(() => {
+    loadSavedConfig().then(() => {
+      // After config is loaded, do health check
+      fetch(`${API_BASE}/api/health`, { headers: authHeaders() })
+        .then((r) => r.json())
+        .then((data) => {
+          setSessionStatus((prev) => ({ ...prev, model: data.model }));
+        })
+        .catch(() => {});
+
+      // Initialize sync path resolver
+      syncPaths.init(API_BASE, authHeaders());
+    });
   }, []);
 
   // Keyboard shortcuts
@@ -884,6 +906,8 @@ function App() {
           activeView={activeView}
           onViewChange={setActiveView}
           unreadCount={unreadCount}
+          syncState={syncState}
+          onSettingsOpen={() => setSettingsOpen(true)}
           onNewChat={() => {
             // If already on an empty session (no user messages), just switch to chat view
             const hasUserMessages = messages.some((m) => m.role === "user");
@@ -1382,6 +1406,13 @@ function App() {
         className: "!bg-background !text-foreground !border-border/50 !shadow-lg",
         duration: 4000,
       }}
+    />
+    <SettingsDialog
+      isOpen={settingsOpen}
+      onClose={() => setSettingsOpen(false)}
+      apiBase={API_BASE}
+      apiToken={API_TOKEN}
+      syncState={syncState}
     />
     </>
   );
