@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
-import { Clock, Zap, Play, Trash2, CalendarClock, Loader2, Plus, Edit2, AlertTriangle } from "lucide-react";
+import { Clock, Zap, FolderOpen, Play, Trash2, CalendarClock, Loader2, Plus, Edit2, AlertTriangle } from "lucide-react";
 import { RoutineEditorDialog } from "./routine-editor-dialog";
 import { toast } from "sonner";
 
 // ── Types ──
 
-export type AutomationType = "cron" | "trigger";
+export type AutomationType = "cron" | "trigger" | "file_drop";
 
 export interface Automation {
   id: string;
@@ -27,7 +27,7 @@ export interface Automation {
 interface AutomationsResponse {
   automations: Automation[];
   total: number;
-  counts: { cron: number; trigger: number };
+  counts: { cron: number; trigger: number; file_drop: number };
 }
 
 // ── Config ──
@@ -64,13 +64,20 @@ function Switch({ checked, onChange, disabled }: { checked: boolean; onChange: (
   );
 }
 
+// ── Type display config ──
+const TYPE_CONFIG = {
+  cron: { icon: Clock, label: "Scheduled Tasks", color: "blue" },
+  trigger: { icon: Zap, label: "Triggers", color: "amber" },
+  file_drop: { icon: FolderOpen, label: "File Drop", color: "emerald" },
+} as const;
+
 // ── Component ──
 
 export function RoutinesPage() {
   const [automations, setAutomations] = useState<Automation[]>([]);
-  const [counts, setCounts] = useState({ cron: 0, trigger: 0 });
+  const [counts, setCounts] = useState({ cron: 0, trigger: 0, file_drop: 0 });
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<"all" | "cron" | "trigger">("all");
+  const [filter, setFilter] = useState<"all" | AutomationType>("all");
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
   const [toggleErrors, setToggleErrors] = useState<Record<string, string>>({});
   const [editorOpen, setEditorOpen] = useState(false);
@@ -89,7 +96,7 @@ export function RoutinesPage() {
       if (res.ok) {
         const data: AutomationsResponse = await res.json();
         setAutomations(data.automations);
-        setCounts(data.counts || { cron: 0, trigger: 0 });
+        setCounts(data.counts || { cron: 0, trigger: 0, file_drop: 0 });
       }
     } catch (e) {
       console.error("Failed to fetch automations", e);
@@ -113,15 +120,13 @@ export function RoutinesPage() {
     return map[prefix] || prefix;
   };
 
-  const handleToggle = async (a: Automation) => {
-    const isCron = a.type === "cron";
-    const endpoint = isCron ? `/api/tasks/${a.id}/toggle` : `/api/triggers/${a.id}/toggle`;
+  // ── Unified API calls ──
 
-    // Clear previous error for this item
+  const handleToggle = async (a: Automation) => {
     setToggleErrors((p) => { const next = { ...p }; delete next[a.id]; return next; });
     setActionLoading((p) => ({ ...p, [a.id]: true }));
     try {
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+      const res = await fetch(`${API_BASE}/api/automations/${a.id}/toggle`, {
         method: "PATCH",
         headers: authHeaders({ "Content-Type": "application/json" }),
       });
@@ -161,18 +166,15 @@ export function RoutinesPage() {
   const handleDelete = async (a: Automation) => {
     if (!confirm(`Are you sure you want to delete "${a.name}"?`)) return;
 
-    const isCron = a.type === "cron";
-    const endpoint = isCron ? `/api/tasks/${a.id}` : `/api/triggers/${a.id}`;
-
     setActionLoading((p) => ({ ...p, [a.id]: true }));
     try {
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+      const res = await fetch(`${API_BASE}/api/automations/${a.id}`, {
         method: "DELETE",
         headers: authHeaders(),
       });
       if (res.ok) {
         setAutomations((prev) => prev.filter((item) => item.id !== a.id));
-        setCounts((prev) => ({ ...prev, [a.type]: prev[a.type] - 1 }));
+        setCounts((prev) => ({ ...prev, [a.type]: Math.max(0, (prev[a.type] || 0) - 1) }));
       }
     } catch (e) {
       console.error("Failed to delete", e);
@@ -185,13 +187,12 @@ export function RoutinesPage() {
 
     setActionLoading((p) => ({ ...p, [`${a.id}-run`]: true }));
     try {
-      const res = await fetch(`${API_BASE}/api/tasks/${a.id}/run`, {
+      const res = await fetch(`${API_BASE}/api/automations/${a.id}/run`, {
         method: "POST",
         headers: authHeaders(),
       });
       if (res.ok) {
-        // Just let it manually trigger, no direct UI update except maybe a toast or checkmark
-        alert("Task triggered successfully. Output will appear in Workspace.");
+        toast.success("Task triggered! Output will appear in Workspace.");
       }
     } catch (e) {
       console.error("Failed to trigger task", e);
@@ -203,26 +204,23 @@ export function RoutinesPage() {
   const handleSaveRoutine = async (data: any) => {
     try {
       const isEdit = !!editingAutomation;
-      const endpoint = data.type === "cron" 
-        ? (isEdit ? `/api/tasks/${editingAutomation!.id}` : "/api/tasks")
-        : (isEdit ? `/api/triggers/${editingAutomation!.id}` : "/api/triggers");
-
+      const endpoint = isEdit
+        ? `/api/automations/${editingAutomation!.id}`
+        : "/api/automations";
       const method = isEdit ? "PUT" : "POST";
-      
-      const payload = data.type === "cron" 
-        ? { task_name: data.task_name, cron: data.cron, task_prompt: data.task_prompt }
-        : { trigger_slug: data.trigger_slug, agent_prompt: data.agent_prompt };
 
       const res = await fetch(`${API_BASE}${endpoint}`, {
         method,
         headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(payload)
+        body: JSON.stringify(data),
       });
 
       if (res.ok) {
         await fetchAutomations();
         return true;
       }
+      const err = await res.json().catch(() => null);
+      toast.error(err?.error || "Failed to save routine");
       return false;
     } catch (e) {
       console.error("Failed to save routine", e);
@@ -233,6 +231,13 @@ export function RoutinesPage() {
   const filteredAutomations = automations.filter(
     (a) => filter === "all" || a.type === filter
   );
+
+  const filterTabs: { key: "all" | AutomationType; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "cron", label: "Scheduled" },
+    { key: "trigger", label: "Triggers" },
+    { key: "file_drop", label: "File Drop" },
+  ];
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-background">
@@ -245,7 +250,7 @@ export function RoutinesPage() {
               Routines
             </h1>
             <p className="text-[13px] text-muted-foreground/50 mt-1">
-              Automated scheduled tasks and background triggers
+              Scheduled tasks, event triggers, and file-drop automations
             </p>
           </div>
           <button
@@ -261,19 +266,19 @@ export function RoutinesPage() {
       {/* Filter Tabs */}
       <div className="px-8 shrink-0 border-b border-border/40">
         <div className="max-w-3xl mx-auto flex items-center gap-6">
-          {(["all", "cron", "trigger"] as const).map((tab) => (
+          {filterTabs.map((tab) => (
             <button
-              key={tab}
-              onClick={() => setFilter(tab)}
+              key={tab.key}
+              onClick={() => setFilter(tab.key)}
               className={`pb-3 text-[13px] font-medium transition-colors relative ${
-                filter === tab ? "text-foreground" : "text-muted-foreground/60 hover:text-foreground/80"
+                filter === tab.key ? "text-foreground" : "text-muted-foreground/60 hover:text-foreground/80"
               }`}
             >
-              {tab === "all" ? "All" : tab === "cron" ? "Scheduled Tasks" : "Triggers"}
+              {tab.label}
               <span className="ml-1.5 text-[10px] text-muted-foreground bg-muted hover:bg-muted/80 px-1.5 py-0.5 rounded-full">
-                {tab === "all" ? automations.length : counts[tab] || 0}
+                {tab.key === "all" ? automations.length : counts[tab.key] || 0}
               </span>
-              {filter === tab && (
+              {filter === tab.key && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground rounded-t-full" />
               )}
             </button>
@@ -290,9 +295,7 @@ export function RoutinesPage() {
                 <div key={i} className="flex flex-col rounded-xl border bg-card p-4 shadow-sm">
                   <div className="flex justify-between items-start">
                     <div className="flex items-start gap-4">
-                      {/* Icon skeleton */}
                       <div className="size-10 rounded-lg bg-muted/60 shrink-0" />
-                      {/* Info skeleton */}
                       <div className="flex flex-col gap-2 pt-0.5">
                         <div className="h-4 w-36 rounded bg-muted/50" />
                         <div className="h-3 w-56 rounded bg-muted/30" />
@@ -302,7 +305,6 @@ export function RoutinesPage() {
                         </div>
                       </div>
                     </div>
-                    {/* Toggle skeleton */}
                     <div className="flex items-center gap-2 h-10 pr-3">
                       <div className="h-3 w-6 rounded bg-muted/30" />
                       <div className="h-5 w-9 rounded-full bg-muted/40" />
@@ -317,13 +319,14 @@ export function RoutinesPage() {
                 <CalendarClock size={24} className="text-muted-foreground/60" />
               </div>
               <p className="text-sm font-medium text-foreground/80">No routines found</p>
-              <p className="text-xs text-muted-foreground mt-1 max-w-[250px]">
-                Create a scheduled task or add an event trigger to automate your workflows.
+              <p className="text-xs text-muted-foreground mt-1 max-w-[280px]">
+                Create a scheduled task, event trigger, or file-drop rule to automate your workflows.
               </p>
             </div>
           ) : (
             filteredAutomations.map((a) => {
-              const Icon = a.type === "cron" ? Clock : Zap;
+              const typeConf = TYPE_CONFIG[a.type] || TYPE_CONFIG.cron;
+              const Icon = typeConf.icon;
               const isEnabled = a.enabled;
 
               return (
@@ -339,7 +342,9 @@ export function RoutinesPage() {
                           isEnabled
                             ? a.type === "cron"
                               ? "bg-blue-500/10 text-blue-500"
-                              : "bg-amber-500/10 text-amber-500"
+                              : a.type === "trigger"
+                              ? "bg-amber-500/10 text-amber-500"
+                              : "bg-emerald-500/10 text-emerald-500"
                             : "bg-muted text-muted-foreground/50"
                         }`}
                       >
@@ -356,6 +361,11 @@ export function RoutinesPage() {
                           >
                             {a.name}
                           </h3>
+                          {a.type === "file_drop" && (
+                            <span className="text-[10px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600">
+                              FILE DROP
+                            </span>
+                          )}
                         </div>
                         <p className="text-[13px] text-muted-foreground mt-1 line-clamp-1 leading-relaxed">
                           {a.description}
@@ -375,6 +385,11 @@ export function RoutinesPage() {
                                 <span>Task Disabled</span>
                               )}
                             </>
+                          )}
+                          {a.type === "file_drop" && (
+                            <span className="text-emerald-600/70">
+                              on {(a.config?.actions as string[])?.join(", ") || "added, modified"}
+                            </span>
                           )}
                           {toggleErrors[a.id] && (
                             <div className="flex items-center gap-1 text-amber-500">

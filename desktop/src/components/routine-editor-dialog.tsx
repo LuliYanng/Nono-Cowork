@@ -28,7 +28,10 @@ export function RoutineEditorDialog({ open, onOpenChange, automation, onSave }: 
   
   const [type, setType] = useState<AutomationType>("cron");
   const [name, setName] = useState("");
-  const [schedule, setSchedule] = useState("");
+  const [schedule, setSchedule] = useState("");      // cron expression
+  const [pathPattern, setPathPattern] = useState(""); // file_drop pattern
+  const [fileActions, setFileActions] = useState("added,modified");
+  const [triggerSlug, setTriggerSlug] = useState("");  // trigger slug
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("");
   const [toolAccess, setToolAccess] = useState("full");
@@ -50,21 +53,30 @@ export function RoutineEditorDialog({ open, onOpenChange, automation, onSave }: 
 
       if (automation) {
         setType(automation.type);
+        setModel(automation.model || "");
+        setToolAccess(automation.config?.tool_access as string || "full");
+
         if (automation.type === "cron") {
           setName(automation.name || "");
           setSchedule(automation.schedule || "");
           setPrompt((automation.config?.task_prompt as string) || automation.description || "");
-        } else {
-          setName(automation.schedule || ""); // for triggers, name is the slug usually
-          setSchedule("");
+        } else if (automation.type === "trigger") {
+          setTriggerSlug(automation.schedule || "");
+          setName(automation.schedule || "");
+          setPrompt((automation.config?.agent_prompt as string) || automation.description || "");
+        } else if (automation.type === "file_drop") {
+          setName(automation.name || "");
+          setPathPattern(automation.schedule || (automation.config?.path_pattern as string) || "");
+          setFileActions(((automation.config?.actions as string[]) || ["added", "modified"]).join(","));
           setPrompt((automation.config?.agent_prompt as string) || automation.description || "");
         }
-        setModel(automation.model || "");
-        setToolAccess(automation.config?.tool_access as string || "full");
       } else {
         setType("cron");
         setName("");
         setSchedule("");
+        setPathPattern("");
+        setFileActions("added,modified");
+        setTriggerSlug("");
         setPrompt("");
         setModel("");
         setToolAccess("full");
@@ -74,37 +86,41 @@ export function RoutineEditorDialog({ open, onOpenChange, automation, onSave }: 
 
   const handleSubmit = async () => {
     setErrorProp("");
+
+    // Validation
     if (type === "cron") {
       if (!name.trim()) return setErrorProp("Name is required");
       if (!schedule.trim()) return setErrorProp("Cron expression is required");
       if (!prompt.trim()) return setErrorProp("Prompt is required");
-    } else {
-      if (!name.trim()) return setErrorProp("Trigger slug is required");
+    } else if (type === "trigger") {
+      if (!triggerSlug.trim()) return setErrorProp("Trigger slug is required");
+      if (!prompt.trim()) return setErrorProp("Prompt is required");
+    } else if (type === "file_drop") {
+      if (!name.trim()) return setErrorProp("Name is required");
+      if (!pathPattern.trim()) return setErrorProp("Path pattern is required");
       if (!prompt.trim()) return setErrorProp("Prompt is required");
     }
 
     setLoading(true);
-    let success = false;
     
     try {
+      // Build unified payload for /api/automations
+      let payload: Record<string, unknown> = {
+        type,
+        model: model === "default" ? "" : model,
+        tool_access: toolAccess,
+      };
+
       if (type === "cron") {
-        success = await onSave({
-          type: "cron",
-          task_name: name,
-          cron: schedule,
-          task_prompt: prompt,
-          model: model === "default" ? "" : model,
-          tool_access: toolAccess,
-        });
-      } else {
-        success = await onSave({
-          type: "trigger",
-          trigger_slug: name,
-          agent_prompt: prompt,
-          model: model === "default" ? "" : model,
-          tool_access: toolAccess,
-        });
+        payload = { ...payload, task_name: name, cron: schedule, task_prompt: prompt };
+      } else if (type === "trigger") {
+        payload = { ...payload, trigger_slug: triggerSlug, agent_prompt: prompt };
+      } else if (type === "file_drop") {
+        const actions = fileActions.split(",").map(s => s.trim()).filter(Boolean);
+        payload = { ...payload, name, path_pattern: pathPattern, agent_prompt: prompt, file_actions: actions };
       }
+
+      const success = await onSave(payload);
       
       if (success) {
         onOpenChange(false);
@@ -146,12 +162,13 @@ export function RoutineEditorDialog({ open, onOpenChange, automation, onSave }: 
                   <SelectContent>
                     <SelectItem value="cron">Scheduled Task (Cron)</SelectItem>
                     <SelectItem value="trigger">Event Trigger</SelectItem>
+                    <SelectItem value="file_drop">File Drop</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             )}
 
-            {type === "cron" ? (
+            {type === "cron" && (
               <>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Task Name</label>
@@ -175,18 +192,60 @@ export function RoutineEditorDialog({ open, onOpenChange, automation, onSave }: 
                   <p className="text-[11px] text-muted-foreground leading-snug">Uses standard cron format (min hr day mo wk)</p>
                 </div>
               </>
-            ) : (
+            )}
+
+            {type === "trigger" && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Trigger Slug</label>
+                <Input
+                  className="h-9 font-mono text-sm"
+                  placeholder="e.g. GMAIL_NEW_GMAIL_MESSAGE"
+                  value={triggerSlug}
+                  onChange={(e) => setTriggerSlug(e.target.value)}
+                  disabled={isEdit || loading}
+                />
+                <p className="text-[11px] text-muted-foreground leading-snug">Exact event identifier from Composio.</p>
+              </div>
+            )}
+
+            {type === "file_drop" && (
               <>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Trigger Slug</label>
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Rule Name</label>
                   <Input
-                    className="h-9 font-mono text-sm"
-                    placeholder="e.g. GMAIL_NEW_GMAIL_MESSAGE"
+                    className="h-9"
+                    placeholder="e.g. Auto Translate"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    disabled={isEdit || loading}
+                    disabled={loading}
                   />
-                  <p className="text-[11px] text-muted-foreground leading-snug">Exact event identifier from Composio.</p>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Path Pattern</label>
+                  <Input
+                    className="h-9 font-mono text-sm"
+                    placeholder="e.g. 翻译/* or 报销/*.pdf"
+                    value={pathPattern}
+                    onChange={(e) => setPathPattern(e.target.value)}
+                    disabled={loading}
+                  />
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    Glob pattern relative to sync folder root. Use * for any file, ** for recursive.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Trigger On</label>
+                  <Select value={fileActions} onValueChange={(v) => setFileActions(v || "added,modified")}>
+                    <SelectTrigger className="h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="added,modified">New & Modified Files</SelectItem>
+                      <SelectItem value="added">New Files Only</SelectItem>
+                      <SelectItem value="modified">Modified Files Only</SelectItem>
+                      <SelectItem value="added,modified,deleted">All Changes</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </>
             )}
@@ -225,11 +284,19 @@ export function RoutineEditorDialog({ open, onOpenChange, automation, onSave }: 
           <div className="flex flex-col gap-3 flex-1 h-full min-h-[350px]">
             <div className="flex flex-col gap-0.5">
               <label className="text-sm font-semibold text-foreground">Agent Prompt Instructions</label>
-              <p className="text-[12px] text-muted-foreground">Define exactly what the AI agent should execute autonomously when this routine triggers. You can use Markdown.</p>
+              <p className="text-[12px] text-muted-foreground">
+                {type === "file_drop"
+                  ? "Define what the AI agent should do when a matching file appears. The agent receives the file path in abs_path."
+                  : "Define exactly what the AI agent should execute autonomously when this routine triggers. You can use Markdown."}
+              </p>
             </div>
             <Textarea
               className="resize-none flex-1 min-h-[250px] p-4 font-mono text-sm leading-relaxed focus-visible:ring-blue-500/30"
-              placeholder="e.g. 1. Read the latest emails.&#10;2. Generate a daily summary.&#10;3. Save it to the workspace docs folder."
+              placeholder={
+                type === "file_drop"
+                  ? "e.g. Read the file at abs_path.\nTranslate its contents to Chinese.\nSave the translation alongside the original file with _zh suffix."
+                  : "e.g. 1. Read the latest emails.\n2. Generate a daily summary.\n3. Save it to the workspace docs folder."
+              }
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               disabled={loading}
