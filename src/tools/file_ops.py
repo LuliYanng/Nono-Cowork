@@ -5,10 +5,28 @@ Supports binary formats: PDF (.pdf), Excel (.xlsx/.xls), Word (.docx).
 Binary files are auto-converted to text/Markdown when read.
 """
 
+import base64
 import os
 import shutil
 from datetime import datetime
 from tools.registry import tool
+
+# ————— Image support —————
+
+# Extensions recognized as images (multimodal input for LLMs)
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".jfif", ".tiff"}
+_IMAGE_MAX_BYTES = 20 * 1024 * 1024  # 20 MB hard limit
+
+# Special marker prefix so agent.py can detect image tool results and
+# convert them to multimodal content parts (image_url with base64 data).
+# Format: __IMAGE_BASE64__<mime_type>|<base64_encoded_data>
+IMAGE_MARKER_PREFIX = "__IMAGE_BASE64__"
+
+_MIME_MAP = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+    ".jfif": "image/jpeg", ".tiff": "image/tiff",
+}
 
 
 # ————— Binary format converters —————
@@ -90,6 +108,26 @@ def _read_docx(path: str) -> str:
     return f"📄 {path} (Word, {len(paragraphs)} paragraphs)\n\n" + "\n".join(paragraphs)
 
 
+def _read_image(path: str) -> str:
+    """Read an image file and return a base64-encoded marker for multimodal LLM input.
+
+    The agent loop detects the IMAGE_MARKER_PREFIX and converts it into a proper
+    multimodal content part (image_url with inline base64 data).
+    """
+    size = os.path.getsize(path)
+    if size > _IMAGE_MAX_BYTES:
+        return f"❌ Image too large ({size / 1024 / 1024:.1f}MB). Max is {_IMAGE_MAX_BYTES / 1024 / 1024:.0f}MB."
+
+    ext = os.path.splitext(path)[1].lower()
+    mime = _MIME_MAP.get(ext, "image/png")
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("ascii")
+
+    size_str = f"{size / 1024:.1f}KB" if size >= 1024 else f"{size}B"
+    # Return the marker — agent.py will parse this
+    return f"{IMAGE_MARKER_PREFIX}{mime}|{b64}|📷 {os.path.basename(path)} ({size_str})"
+
+
 # Extension → converter mapping
 _BINARY_READERS: dict[str, callable] = {
     ".pdf": _read_pdf,
@@ -97,6 +135,9 @@ _BINARY_READERS: dict[str, callable] = {
     ".xls": _read_excel,
     ".docx": _read_docx,
 }
+# Add all image extensions
+for _ext in _IMAGE_EXTENSIONS:
+    _BINARY_READERS[_ext] = _read_image
 
 
 # ————— Snapshot: auto-backup before Agent edits —————
@@ -249,7 +290,7 @@ def _snapshot_file(file_path: str) -> str | None:
 
 @tool(
     name="read_file",
-    description="Read file contents with optional line range. Supports text files, PDF, Excel (.xlsx), and Word (.docx) — binary formats are automatically converted to text. Use this to view code, configs, documents, spreadsheets, etc.",
+    description="Read file contents with optional line range. Supports text files, PDF, Excel (.xlsx), Word (.docx), and images (.png, .jpg, .gif, .webp, etc.) — binary formats are automatically handled. Images are sent as visual input so you can see and analyze them directly. Use this to view code, configs, documents, spreadsheets, photos, screenshots, etc.",
     parameters={
         "type": "object",
         "properties": {

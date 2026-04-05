@@ -426,11 +426,18 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
                 if not composio_tools.is_composio_tool(tool_name) and tool_name != "read_file":
                     tool_result = spill_tool_output(tool_result, tool_name=tool_name)
 
-                _print_tool_result(tool_result)
+                # Print result (truncate images for terminal readability)
+                from tools.file_ops import IMAGE_MARKER_PREFIX as _IMP
+                display_result = tool_result
+                if isinstance(tool_result, str) and tool_result.startswith(_IMP):
+                    # Extract caption from the marker (last segment after |)
+                    _parts = tool_result[len(_IMP):].split("|", 2)
+                    display_result = _parts[2] if len(_parts) == 3 else "📷 (image loaded)"
+                _print_tool_result(display_result)
 
                 # Notify external: tool call result
                 if on_event:
-                    on_event({"type": "tool_result", "tool_name": tool_name, "result": tool_result, "round": round_num})
+                    on_event({"type": "tool_result", "tool_name": tool_name, "result": display_result, "round": round_num})
 
                 # Log tool call result
                 log_event(log_file, {
@@ -439,14 +446,43 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
                     "tool_name": tool_name,
                     "tool_call_id": tc.id,
                     "args": args,
-                    "result": tool_result,
+                    "result": tool_result[:2000] if len(tool_result) > 2000 else tool_result,
                 })
 
-                history.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": tool_result,
-                })
+                # ── Multimodal: convert image markers to image_url content ──
+                from tools.file_ops import IMAGE_MARKER_PREFIX
+                if isinstance(tool_result, str) and tool_result.startswith(IMAGE_MARKER_PREFIX):
+                    # Parse: __IMAGE_BASE64__<mime>|<base64>|<caption>
+                    stripped = tool_result[len(IMAGE_MARKER_PREFIX):]
+                    parts = stripped.split("|", 2)
+                    if len(parts) == 3:
+                        mime, b64_data, caption = parts
+                        history.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": [
+                                {"type": "text", "text": caption},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{mime};base64,{b64_data}",
+                                    },
+                                },
+                            ],
+                        })
+                    else:
+                        # Fallback: couldn't parse, send as text
+                        history.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": tool_result,
+                        })
+                else:
+                    history.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": tool_result,
+                    })
         except KeyboardInterrupt:
             print("\n\n⚡ User interrupted the current task")
             if history and hasattr(history[-1], "tool_calls") and history[-1].tool_calls:

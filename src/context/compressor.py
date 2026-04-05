@@ -85,6 +85,17 @@ def _messages_to_text(messages: list) -> str:
                     tc_texts.append(f"  → {tc.function.name}({tc.function.arguments})")
                 content = (content or "") + "\n" + "\n".join(tc_texts)
 
+        # Handle multimodal content arrays (e.g., image tool results)
+        if isinstance(content, list):
+            text_parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    elif part.get("type") == "image_url":
+                        text_parts.append("[image]")
+            content = " ".join(text_parts) if text_parts else ""
+
         if not content:
             continue
 

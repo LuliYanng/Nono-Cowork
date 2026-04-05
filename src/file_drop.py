@@ -210,7 +210,14 @@ class FileDropEngine:
                 continue
 
             # Check action type
-            if event.action not in rule.get("actions", ["added", "modified"]):
+            # NOTE: Syncthing's RemoteChangeDetected can report genuinely
+            # new files as "modified" (platform quirk with index state).
+            # So if a rule wants "added", we also accept "modified" and vice versa.
+            rule_actions = set(rule.get("actions", ["added", "modified"]))
+            effective_actions = set(rule_actions)
+            if "added" in rule_actions or "modified" in rule_actions:
+                effective_actions |= {"added", "modified"}
+            if event.action not in effective_actions:
                 continue
 
             # Check folder_id (empty = any folder)
