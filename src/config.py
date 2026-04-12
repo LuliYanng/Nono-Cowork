@@ -14,6 +14,7 @@ MODEL_POOL = [
     "gemini/gemini-2.5-pro",
     "gemini/gemini-3.1-pro-preview",
     "gemini/gemini-3-flash-preview",
+    "gemini/gemini-3.1-flash-lite-preview",
     "anthropic/claude-sonnet-4-20250514",
     "openai/gpt-5.1",
     "moonshotai/kimi-k2",

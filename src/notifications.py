@@ -286,15 +286,18 @@ class NotificationStore:
             "read_at": None,
             "delivered_channels": [],
         }
-        self._append_notification(notification)
 
-        # 3. Distribute
+        # 3. Distribute to channels (modifies notification["delivered_channels"] in-place)
         self._distribute(notification, body, deliver_to)
 
+        # 4. Persist notification (after distribute, so delivered_channels is accurate)
+        self._append_notification(notification)
+
         logger.info(
-            "Notification created: %s [%s] session=%s deliverables=%d",
+            "Notification created: %s [%s] session=%s deliverables=%d channels=%s",
             notification_id, title, session_id,
             len(card["deliverables"]),
+            notification["delivered_channels"],
         )
         return notification
 
@@ -541,9 +544,21 @@ class NotificationStore:
                 channel = get_channel(ch_name)
                 if channel:
                     try:
+                        # Resolve the correct native user_id for this channel.
+                        # Each channel has an owner_native_id (e.g., Feishu open_id,
+                        # Telegram chat_id) that differs from OWNER_USER_ID.
+                        native_id = getattr(channel, 'owner_native_id', None)
+                        if not native_id:
+                            logger.warning(
+                                "Channel '%s' has no owner_native_id configured. "
+                                "Set %s_OWNER_* env var. Skipping IM delivery.",
+                                ch_name, ch_name.upper(),
+                            )
+                            continue
+
                         # IM gets title + summary, not the full body
                         im_text = f"🔔 {notification['title']}\n\n{notification['summary'][:500]}"
-                        channel.send_reply(user_id, im_text)
+                        channel.send_reply(native_id, im_text)
                         notification["delivered_channels"].append(ch_name)
                     except Exception as e:
                         logger.warning("Failed to deliver to %s: %s", ch_name, e)

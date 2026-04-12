@@ -1061,6 +1061,29 @@ async def get_sync_status():
 # ══════════════════════════════════════════════
 
 
+# ── Available Channels ──
+
+@app.get("/api/channels")
+async def list_channels_api():
+    """List all registered (active) channels.
+
+    Used by the frontend to populate the notify_channels selector.
+    Returns channel name and whether it has owner_native_id configured
+    (needed for notification delivery).
+    """
+    from channels.registry import list_channels, get_channel
+
+    result = []
+    for name in list_channels():
+        ch = get_channel(name)
+        if ch:
+            result.append({
+                "name": name,
+                "has_owner_id": bool(getattr(ch, 'owner_native_id', '')),
+            })
+    return {"channels": result}
+
+
 # ── Scheduled Tasks (Cron) ──
 
 @app.get("/api/tasks")
@@ -1084,7 +1107,7 @@ async def list_tasks_api():
 async def create_task_api(request: Request):
     """Create a new scheduled task.
 
-    Body: {task_name, cron, task_prompt, channel_name?}
+    Body: {task_name, cron, task_prompt, channel_name?, model?, tool_access?, notify_channels?}
     """
     from scheduler.store import create_task
     from scheduler import scheduler as task_scheduler
@@ -1097,6 +1120,7 @@ async def create_task_api(request: Request):
     channel_name = body.get("channel_name", "desktop")
     model = body.get("model", "").strip()
     tool_access = body.get("tool_access", "full")
+    notify_channels = body.get("notify_channels")  # list[str] or None
 
     if not task_name:
         return JSONResponse({"error": "Missing 'task_name'"}, status_code=400)
@@ -1114,6 +1138,7 @@ async def create_task_api(request: Request):
             channel_name=channel_name,
             model=model,
             tool_access=tool_access,
+            notify_channels=notify_channels,
         )
         task_scheduler.add_task(task)
         next_run = task_scheduler.get_next_run(task["id"])
@@ -1139,7 +1164,7 @@ async def get_task_api(task_id: str):
 async def update_task_api(task_id: str, request: Request):
     """Update a scheduled task's fields.
 
-    Body: {task_name?, cron?, task_prompt?, enabled?}
+    Body: {task_name?, cron?, task_prompt?, enabled?, model?, tool_access?, notify_channels?}
     """
     from scheduler.store import get_task, update_task
     from scheduler import scheduler as task_scheduler
@@ -1150,7 +1175,8 @@ async def update_task_api(task_id: str, request: Request):
 
     body = await request.json()
     updates = {}
-    for field in ("task_name", "cron", "task_prompt", "enabled", "model", "tool_access"):
+    for field in ("task_name", "cron", "task_prompt", "enabled", "model",
+                  "tool_access", "notify_channels"):
         if field in body:
             updates[field] = body[field]
 
@@ -1520,6 +1546,7 @@ async def list_automations_api():
             "tool_access": t.get("tool_access", "full"),
             "channel_name": t.get("channel_name", ""),
             "channel_user_id": t.get("channel_user_id", t.get("user_id", "")),
+            "notify_channels": t.get("notify_channels"),
             "created_at": t.get("created_at", ""),
             "last_run_at": t.get("last_run_at"),
             "last_result": (t.get("last_result") or "")[:200],

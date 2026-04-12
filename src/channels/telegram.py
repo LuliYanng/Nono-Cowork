@@ -41,10 +41,18 @@ ALLOWED_USERS: set[int] = set(
 
 MAX_MSG_LEN = 4096  # Telegram single message length limit
 
+# Owner's Telegram chat_id for notification delivery.
+# Auto-detected: captured from the first authorized message at runtime.
+# Can be overridden via env var, or falls back to first TELEGRAM_ALLOWED_USERS entry.
+_TELEGRAM_OWNER_CHAT_ID = os.getenv("TELEGRAM_OWNER_CHAT_ID", "").strip()
+if not _TELEGRAM_OWNER_CHAT_ID and ALLOWED_USERS:
+    _TELEGRAM_OWNER_CHAT_ID = str(next(iter(ALLOWED_USERS)))
+
 
 # ========== Telegram channel ==========
 class TelegramChannel(Channel):
     name = "telegram"
+    owner_native_id = _TELEGRAM_OWNER_CHAT_ID
 
     def __init__(self):
         self.bot = None
@@ -142,6 +150,11 @@ class TelegramChannel(Channel):
                 logger.warning(f"Unauthorized user: {user_id}")
                 self.bot.send_message(chat_id, "⛔ You are not authorized to use this bot.")
                 return
+
+            # Auto-learn owner's chat_id from the first authorized message
+            if not self.owner_native_id:
+                self.owner_native_id = str(chat_id)
+                logger.info(f"Auto-captured owner Telegram chat_id: {chat_id}")
 
             # Handle /start command
             if user_text.startswith("/start"):

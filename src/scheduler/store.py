@@ -9,6 +9,7 @@ Each task is a dict with:
   - task_prompt: str (natural language instruction for the Agent)
   - channel_user_id: str (IM-specific delivery target, e.g., feishu ou_xxx)
   - channel_name: str (which IM channel to push results to)
+  - notify_channels: list[str] | None (extra channels to deliver results, e.g. ["feishu", "telegram"])
   - enabled: bool
   - created_at: str (ISO timestamp)
   - last_run_at: str | None (ISO timestamp of last execution)
@@ -59,7 +60,8 @@ def _save_all(tasks: list[dict]):
 
 def create_task(task_name: str, cron: str, task_prompt: str,
                 channel_user_id: str, channel_name: str,
-                tool_access: str = "full", model: str = "") -> dict:
+                tool_access: str = "full", model: str = "",
+                notify_channels: list[str] = None) -> dict:
     """Create and persist a new scheduled task. Returns the task dict."""
     task = {
         "id": uuid.uuid4().hex[:12],
@@ -70,6 +72,7 @@ def create_task(task_name: str, cron: str, task_prompt: str,
         "channel_name": channel_name,
         "tool_access": tool_access,
         "model": model,
+        "notify_channels": notify_channels,  # e.g. ["feishu", "telegram"] or None
         "enabled": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "last_run_at": None,
@@ -104,7 +107,8 @@ def list_tasks(channel_user_id: str = None) -> list[dict]:
 def update_task(task_id: str, **updates) -> dict | None:
     """Update a task's fields. Returns updated task or None if not found."""
     allowed_fields = {"task_name", "cron", "task_prompt", "enabled",
-                      "last_run_at", "last_result", "tool_access", "model"}
+                      "last_run_at", "last_result", "tool_access", "model",
+                      "notify_channels"}
     with _lock:
         tasks = _load_all()
         for t in tasks:

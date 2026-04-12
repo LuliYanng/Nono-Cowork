@@ -40,10 +40,18 @@ ALLOWED_USERS: set[str] = set(u.strip() for u in ALLOWED_USERS_STR.split(",") if
 
 MAX_CARD_LEN = 4000
 
+# Owner's Feishu open_id for notification delivery.
+# Auto-detected: captured from the first authorized message at runtime.
+# Can be overridden via env var, or falls back to first FEISHU_ALLOWED_USERS entry.
+_FEISHU_OWNER_OPEN_ID = os.getenv("FEISHU_OWNER_OPEN_ID", "").strip()
+if not _FEISHU_OWNER_OPEN_ID and ALLOWED_USERS:
+    _FEISHU_OWNER_OPEN_ID = next(iter(ALLOWED_USERS))
+
 
 # ========== Feishu channel ==========
 class FeishuChannel(Channel):
     name = "feishu"
+    owner_native_id = _FEISHU_OWNER_OPEN_ID
 
     def __init__(self):
         self.client = lark.Client.builder() \
@@ -189,6 +197,12 @@ class FeishuChannel(Channel):
                 logger.warning(f"Unauthorized user: {open_id}")
                 self._send_text(open_id, "⛔ You are not authorized to use this bot.")
                 return
+
+            # Auto-learn owner's open_id from the first authorized message
+            # (single-owner system: anyone who passes auth IS the owner)
+            if not self.owner_native_id:
+                self.owner_native_id = open_id
+                logger.info(f"Auto-captured owner Feishu open_id: {open_id}")
 
             # Only handle text messages
             if msg_type != "text":
