@@ -30,6 +30,21 @@ Click **Test Connection** to verify, then **Save & Reconnect**.
 
 If [Syncthing is running](syncthing_setup.md) on both your VPS and local machine, the desktop app will automatically pair them using the API connection — **no manual Device ID exchange needed**.
 
+### Windows embedded Syncthing (built-in runtime)
+
+On Windows, the desktop app can run a managed Syncthing process directly (no separate SyncTrayzor install required), when `syncthing.exe` is bundled with the app.
+
+For local packaging, prepare the binary first:
+
+```bash
+cd desktop
+npm run syncthing:prepare:win
+```
+
+The binary is copied into `electron/vendor/syncthing/windows-amd64/` and included by `electron-builder` as an app resource.
+
+> License note: Syncthing is MPL-2.0. Keep the upstream license text in your distribution package.
+
 The sync status indicator at the bottom of the sidebar shows:
 
 | Status | Meaning |

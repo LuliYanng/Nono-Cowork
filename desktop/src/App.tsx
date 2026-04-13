@@ -18,6 +18,26 @@ declare global {
         folders: Array<{ id: string; label: string; path: string }>;
         error?: string;
       }>;
+      syncthingLocalDevice: () => Promise<{
+        success: boolean;
+        deviceId: string;
+        deviceName?: string;
+        error?: string;
+      }>;
+      syncthingEnsureRemoteDevice: (args: {
+        deviceId: string;
+        deviceName?: string;
+      }) => Promise<{ success: boolean; added: boolean; error?: string }>;
+      syncthingRuntimeInfo: () => Promise<{
+        success: boolean;
+        managed: boolean;
+        baseUrl: string;
+        configPath: string;
+        processAlive: boolean;
+      }>;
+      getAppConfig: () => Promise<Record<string, string>>;
+      saveAppConfig: (config: Record<string, string>) => Promise<{ success: boolean }>;
+      reloadWindow: () => Promise<{ success: boolean }>;
       getPlatform: () => string;
     };
   }
@@ -237,7 +257,7 @@ let API_TOKEN = import.meta.env.VITE_API_TOKEN || "";
 
 // Load saved config from Electron (called once on mount)
 async function loadSavedConfig() {
-  const electron = (window as any).electronAPI;
+  const electron = window.electronAPI;
   if (!electron?.getAppConfig) return;
   try {
     const config = await electron.getAppConfig();
@@ -417,6 +437,54 @@ function App() {
 
   // Settings dialog
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const autoPairAttemptedRef = useRef(false);
+  const autoPairRunningRef = useRef(false);
+
+  const autoPairSyncthing = useCallback(async () => {
+    if (autoPairAttemptedRef.current || autoPairRunningRef.current) return;
+    autoPairRunningRef.current = true;
+    autoPairAttemptedRef.current = true;
+
+    try {
+      const electron = window.electronAPI;
+      if (!electron?.syncthingLocalDevice || !electron?.syncthingEnsureRemoteDevice) return;
+
+      // Step 1: Read local Syncthing device info from Electron (localhost API)
+      const local = await electron.syncthingLocalDevice();
+      if (!local.success || !local.deviceId) return;
+
+      // Step 2: Register local device on VPS via authenticated desktop API
+      const res = await fetch(`${API_BASE}/api/sync/pair`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          device_id: local.deviceId,
+          device_name: local.deviceName || "Desktop Client",
+        }),
+      });
+
+      if (!res.ok) return;
+      const pair = await res.json();
+      const vpsDeviceId = (pair?.vps_device_id || "").trim();
+      if (!vpsDeviceId) return;
+
+      // Step 3: Ensure the returned VPS device is trusted on local Syncthing
+      let host = "Nono CoWork VPS";
+      try {
+        host = new URL(API_BASE).hostname || host;
+      } catch {
+        // Keep default label when API_BASE is not a full URL
+      }
+      await electron.syncthingEnsureRemoteDevice({
+        deviceId: vpsDeviceId,
+        deviceName: `Nono CoWork (${host})`,
+      });
+    } catch {
+      // Silent fallback: auto-pair is best-effort and should not block the app
+    } finally {
+      autoPairRunningRef.current = false;
+    }
+  }, []);
 
   // Load saved config on mount (before health check)
   useEffect(() => {
@@ -431,8 +499,11 @@ function App() {
 
       // Initialize sync path resolver
       syncPaths.init(API_BASE, authHeaders());
+
+      // Best-effort silent auto-pair (first use / server migration friendly)
+      autoPairSyncthing();
     });
-  }, []);
+  }, [autoPairSyncthing]);
 
   // Keyboard shortcuts
   useEffect(() => {

@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Local Syncthing query (for zero-config path mapping)
   syncthingLocalFolders: () => ipcRenderer.invoke('syncthing-local-folders'),
+  syncthingLocalDevice: () => ipcRenderer.invoke('syncthing-local-device'),
+  syncthingEnsureRemoteDevice: (args) => ipcRenderer.invoke('syncthing-ensure-remote-device', args),
+  syncthingRuntimeInfo: () => ipcRenderer.invoke('syncthing-runtime-info'),
 
   // App config (VPS connection persistence)
   getAppConfig: () => ipcRenderer.invoke('get-app-config'),

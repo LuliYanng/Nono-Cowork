@@ -1,6 +1,9 @@
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const http = require('http');
+const { spawn } = require('child_process');
 
 // ── Local config persistence ──
 // Stores { apiBase, apiToken } in userData directory
@@ -31,6 +34,274 @@ function writeConfig(config) {
     return false;
   }
 }
+
+const MANAGED_SYNCTHING_PORT = Number(process.env.NONO_SYNCTHING_GUI_PORT || '52784');
+const MANAGED_SYNCTHING_STARTUP_TIMEOUT_MS = 20_000;
+let appIsQuitting = false;
+
+let syncthingRuntime = {
+  managed: false,
+  baseUrl: process.env.NONO_SYNCTHING_URL || 'http://127.0.0.1:8384',
+  configPath: null,
+};
+
+let managedSyncthingProcess = null;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getExternalSyncthingConfigPath() {
+  if (process.platform === 'win32') {
+    return path.join(process.env.LOCALAPPDATA || '', 'Syncthing', 'config.xml');
+  }
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Application Support', 'Syncthing', 'config.xml');
+  }
+  return path.join(os.homedir(), '.local', 'state', 'syncthing', 'config.xml');
+}
+
+function getManagedSyncthingHomePath() {
+  return path.join(app.getPath('userData'), 'syncthing-home');
+}
+
+function getManagedSyncthingConfigPath() {
+  return path.join(getManagedSyncthingHomePath(), 'config.xml');
+}
+
+function getManagedSyncthingExeCandidates() {
+  const out = [];
+  if (process.env.NONO_SYNCTHING_EXE) {
+    out.push(process.env.NONO_SYNCTHING_EXE);
+  }
+  // Packaged app: extraResources/syncthing/syncthing.exe
+  out.push(path.join(process.resourcesPath, 'syncthing', 'syncthing.exe'));
+  // Dev mode: repository copy
+  out.push(path.join(__dirname, 'vendor', 'syncthing', 'windows-amd64', 'syncthing.exe'));
+  return out;
+}
+
+function findManagedSyncthingExe() {
+  for (const p of getManagedSyncthingExeCandidates()) {
+    if (p && fs.existsSync(p)) return p;
+  }
+  return '';
+}
+
+function readSyncthingApiKeyFromConfig(configPath) {
+  try {
+    if (!configPath || !fs.existsSync(configPath)) return '';
+    const xml = fs.readFileSync(configPath, 'utf8');
+    const match = xml.match(/<apikey>([^<]+)<\/apikey>/);
+    return match ? match[1] : '';
+  } catch {
+    return '';
+  }
+}
+
+function readSyncthingApiKey() {
+  const configPath = syncthingRuntime.configPath || getExternalSyncthingConfigPath();
+  return readSyncthingApiKeyFromConfig(configPath);
+}
+
+function syncthingRequest(method, endpoint, body, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const baseUrl = opts.baseUrl || syncthingRuntime.baseUrl || 'http://127.0.0.1:8384';
+    const apiKey = opts.apiKey != null ? opts.apiKey : readSyncthingApiKey();
+    const requestUrl = new URL(endpoint, baseUrl);
+    const payload = body ? JSON.stringify(body) : null;
+    const headers = {
+      ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+      ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
+    };
+
+    const req = http.request(
+      requestUrl,
+      {
+        method,
+        headers,
+        timeout: 5000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          const ok = (res.statusCode || 500) >= 200 && (res.statusCode || 500) < 300;
+          if (!ok) {
+            reject(new Error(`Syncthing API ${method} ${endpoint} failed: HTTP ${res.statusCode}`));
+            return;
+          }
+          if (!data) {
+            resolve({});
+            return;
+          }
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            resolve({});
+          }
+        });
+      }
+    );
+
+    req.on('error', () => reject(new Error('Local Syncthing not reachable')));
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Local Syncthing request timed out'));
+    });
+
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+async function waitForManagedSyncthingReady() {
+  const deadline = Date.now() + MANAGED_SYNCTHING_STARTUP_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const apiKey = readSyncthingApiKeyFromConfig(getManagedSyncthingConfigPath());
+    if (apiKey) {
+      try {
+        await syncthingRequest('GET', '/rest/system/status', null, {
+          baseUrl: `http://127.0.0.1:${MANAGED_SYNCTHING_PORT}`,
+          apiKey,
+        });
+        return;
+      } catch {
+        // Keep retrying until timeout
+      }
+    }
+    await sleep(400);
+  }
+  throw new Error('Managed Syncthing startup timed out');
+}
+
+async function initializeSyncthingRuntime() {
+  syncthingRuntime = {
+    managed: false,
+    baseUrl: process.env.NONO_SYNCTHING_URL || 'http://127.0.0.1:8384',
+    configPath: getExternalSyncthingConfigPath(),
+  };
+
+  // Windows-first embedded mode (can be disabled with NONO_MANAGED_SYNCTHING=0)
+  if (process.platform !== 'win32' || process.env.NONO_MANAGED_SYNCTHING === '0') {
+    return;
+  }
+
+  const exePath = findManagedSyncthingExe();
+  if (!exePath) {
+    console.warn('[Syncthing] Embedded binary not found, fallback to external Syncthing instance.');
+    return;
+  }
+
+  const homePath = getManagedSyncthingHomePath();
+  fs.mkdirSync(homePath, { recursive: true });
+
+  managedSyncthingProcess = spawn(
+    exePath,
+    [
+      'serve',
+      '--home', homePath,
+      '--no-browser',
+      // Keep a fixed localhost GUI port for desktop IPC calls.
+      // (Syncthing v2 removed the old --no-default-folder flag.)
+      '--gui-address', `127.0.0.1:${MANAGED_SYNCTHING_PORT}`,
+    ],
+    {
+      windowsHide: true,
+      stdio: 'ignore',
+    }
+  );
+
+  managedSyncthingProcess.on('exit', (code, signal) => {
+    if (!appIsQuitting) {
+      console.warn(`[Syncthing] Embedded process exited unexpectedly (code=${code}, signal=${signal})`);
+    }
+    managedSyncthingProcess = null;
+  });
+
+  try {
+    await waitForManagedSyncthingReady();
+    syncthingRuntime = {
+      managed: true,
+      baseUrl: `http://127.0.0.1:${MANAGED_SYNCTHING_PORT}`,
+      configPath: getManagedSyncthingConfigPath(),
+    };
+    console.info('[Syncthing] Embedded mode enabled');
+  } catch (err) {
+    console.error('[Syncthing] Embedded startup failed, fallback to external:', err.message);
+    if (managedSyncthingProcess) {
+      try { managedSyncthingProcess.kill(); } catch {}
+      managedSyncthingProcess = null;
+    }
+    syncthingRuntime = {
+      managed: false,
+      baseUrl: process.env.NONO_SYNCTHING_URL || 'http://127.0.0.1:8384',
+      configPath: getExternalSyncthingConfigPath(),
+    };
+  }
+}
+
+async function shutdownManagedSyncthing() {
+  if (!managedSyncthingProcess) return;
+  try {
+    const apiKey = readSyncthingApiKeyFromConfig(getManagedSyncthingConfigPath());
+    if (apiKey) {
+      await syncthingRequest('POST', '/rest/system/shutdown', null, {
+        baseUrl: `http://127.0.0.1:${MANAGED_SYNCTHING_PORT}`,
+        apiKey,
+      });
+    }
+  } catch {
+    // Ignore shutdown API failures
+  }
+
+  await sleep(700);
+  if (managedSyncthingProcess) {
+    try { managedSyncthingProcess.kill(); } catch {}
+    managedSyncthingProcess = null;
+  }
+}
+
+async function getLocalSyncthingStatus() {
+  const [systemStatus, folders] = await Promise.all([
+    syncthingRequest('GET', '/rest/system/status'),
+    syncthingRequest('GET', '/rest/config/folders'),
+  ]);
+
+  return {
+    deviceId: systemStatus.myID || '',
+    folders: (Array.isArray(folders) ? folders : []).map((f) => ({
+      id: f.id,
+      label: f.label || f.id,
+      path: f.path,
+    })),
+  };
+}
+
+async function ensureLocalSyncthingRemoteDevice(deviceId, deviceName) {
+  const trimmedId = (deviceId || '').trim();
+  if (!trimmedId) {
+    throw new Error("Missing 'deviceId'");
+  }
+
+  const name = (deviceName || '').trim() || 'Nono CoWork VPS';
+  const config = await syncthingRequest('GET', '/rest/config');
+  const devices = Array.isArray(config.devices) ? config.devices : [];
+  const existing = devices.find((d) => d && d.deviceID === trimmedId);
+
+  if (existing) {
+    return { added: false };
+  }
+
+  await syncthingRequest('POST', '/rest/config/devices', {
+    deviceID: trimmedId,
+    name,
+    autoAcceptFolders: true,
+  });
+
+  return { added: true };
+}
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1000,
@@ -140,57 +411,49 @@ function createWindow() {
   // Query LOCAL Syncthing API to get local folder paths (zero-config)
   ipcMain.handle('syncthing-local-folders', async () => {
     try {
-      const fs = require('fs');
-      const http = require('http');
-      const os = require('os');
-
-      // Read Syncthing API key from local config.xml
-      let configPath;
-      if (process.platform === 'win32') {
-        configPath = path.join(process.env.LOCALAPPDATA || '', 'Syncthing', 'config.xml');
-      } else if (process.platform === 'darwin') {
-        configPath = path.join(os.homedir(), 'Library', 'Application Support', 'Syncthing', 'config.xml');
-      } else {
-        configPath = path.join(os.homedir(), '.local', 'state', 'syncthing', 'config.xml');
-      }
-
-      let apiKey = '';
-      if (fs.existsSync(configPath)) {
-        const xml = fs.readFileSync(configPath, 'utf8');
-        const match = xml.match(/<apikey>([^<]+)<\/apikey>/);
-        if (match) apiKey = match[1];
-      }
-
-      // Query local Syncthing REST API
-      const result = await new Promise((resolve, reject) => {
-        const req = http.get('http://localhost:8384/rest/config/folders', {
-          headers: apiKey ? { 'X-API-Key': apiKey } : {},
-          timeout: 3000,
-        }, (res) => {
-          let data = '';
-          res.on('data', (chunk) => { data += chunk; });
-          res.on('end', () => {
-            try {
-              resolve(JSON.parse(data));
-            } catch { resolve([]); }
-          });
-        });
-        req.on('error', () => reject(new Error('Local Syncthing not reachable')));
-        req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
-      });
-
-      // Return simplified folder info: { id, label, path }
+      const status = await getLocalSyncthingStatus();
       return {
         success: true,
-        folders: (Array.isArray(result) ? result : []).map(f => ({
-          id: f.id,
-          label: f.label || f.id,
-          path: f.path,
-        })),
+        folders: status.folders,
       };
     } catch (err) {
       return { success: false, folders: [], error: err.message };
     }
+  });
+
+  // Get local Syncthing device ID (used for backend auto-pair request)
+  ipcMain.handle('syncthing-local-device', async () => {
+    try {
+      const status = await getLocalSyncthingStatus();
+      return {
+        success: true,
+        deviceId: status.deviceId,
+        deviceName: `${os.hostname()} Desktop`,
+      };
+    } catch (err) {
+      return { success: false, deviceId: '', error: err.message };
+    }
+  });
+
+  // Ensure VPS device exists in local Syncthing trusted devices
+  ipcMain.handle('syncthing-ensure-remote-device', async (_event, args = {}) => {
+    try {
+      const result = await ensureLocalSyncthingRemoteDevice(args.deviceId, args.deviceName);
+      return { success: true, ...result };
+    } catch (err) {
+      return { success: false, added: false, error: err.message };
+    }
+  });
+
+  // Debug/runtime info for desktop diagnostics
+  ipcMain.handle('syncthing-runtime-info', async () => {
+    return {
+      success: true,
+      managed: syncthingRuntime.managed,
+      baseUrl: syncthingRuntime.baseUrl,
+      configPath: syncthingRuntime.configPath || '',
+      processAlive: !!managedSyncthingProcess,
+    };
   });
 
   // ── App config IPC (local persistence for VPS connection) ──
@@ -230,7 +493,16 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  await initializeSyncthingRuntime();
+  createWindow();
+});
+
+app.on('before-quit', () => {
+  appIsQuitting = true;
+  // Fire-and-forget, then force kill fallback
+  shutdownManagedSyncthing().catch(() => {});
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "electron:dev": "concurrently \"vite\" \"npx wait-on http://localhost:5173 && npx electron .\"",
+    "syncthing:prepare:win": "powershell -ExecutionPolicy Bypass -File .\\scripts\\fetch-syncthing-win.ps1",
     "build": "tsc -b && vite build",
     "package": "npm run build && electron-builder",
     "lint": "eslint .",
@@ -18,6 +19,12 @@
     "directories": {
       "output": "release"
     },
+    "extraResources": [
+      {
+        "from": "electron/vendor/syncthing/windows-amd64",
+        "to": "syncthing"
+      }
+    ],
     "files": [
       "dist/**/*",
       "electron/**/*",
