@@ -28,6 +28,10 @@ declare global {
         deviceId: string;
         deviceName?: string;
       }) => Promise<{ success: boolean; added: boolean; error?: string }>;
+      syncthingEnsureFolders: (args: {
+        vpsDeviceId: string;
+        folders: Array<{ id: string; label: string; path: string }>;
+      }) => Promise<{ success: boolean; created: string[]; skipped: string[]; error?: string }>;
       syncthingRuntimeInfo: () => Promise<{
         success: boolean;
         managed: boolean;
@@ -479,6 +483,15 @@ function App() {
         deviceId: vpsDeviceId,
         deviceName: `Nono CoWork (${host})`,
       });
+
+      // Step 4: Ensure VPS shared folders are mirrored locally
+      const vpsFolders = pair?.folders;
+      if (electron.syncthingEnsureFolders && Array.isArray(vpsFolders) && vpsFolders.length > 0) {
+        await electron.syncthingEnsureFolders({
+          vpsDeviceId,
+          folders: vpsFolders,
+        });
+      }
     } catch {
       // Silent fallback: auto-pair is best-effort and should not block the app
     } finally {

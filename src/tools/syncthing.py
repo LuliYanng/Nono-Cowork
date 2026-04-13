@@ -7,12 +7,38 @@ import requests
 from tools.registry import tool
 
 
+def _auto_detect_api_key() -> str:
+    """Read the Syncthing API key from its config.xml (same logic as desktop electron).
+
+    Resolution order:
+    1. Standard Linux path: ~/.local/state/syncthing/config.xml
+    2. Legacy Linux path:   ~/.config/syncthing/config.xml
+    3. macOS path:          ~/Library/Application Support/Syncthing/config.xml
+    """
+    import re, pathlib
+    candidates = [
+        pathlib.Path.home() / ".local" / "state" / "syncthing" / "config.xml",
+        pathlib.Path.home() / ".config" / "syncthing" / "config.xml",
+        pathlib.Path.home() / "Library" / "Application Support" / "Syncthing" / "config.xml",
+    ]
+    for p in candidates:
+        try:
+            if p.exists():
+                xml = p.read_text(encoding="utf-8")
+                m = re.search(r"<apikey>([^<]+)</apikey>", xml)
+                if m:
+                    return m.group(1)
+        except Exception:
+            continue
+    return ""
+
+
 class SyncthingClient:
     """Lightweight Syncthing REST API client, wrapping only the functionality needed by Agent."""
 
     def __init__(self, url=None, api_key=None):
         self.url = (url or os.getenv("SYNCTHING_URL", "http://localhost:8384")).rstrip("/")
-        self.api_key = api_key or os.getenv("SYNCTHING_API_KEY", "")
+        self.api_key = api_key or os.getenv("SYNCTHING_API_KEY", "") or _auto_detect_api_key()
         self.headers = {"X-API-Key": self.api_key} if self.api_key else {}
         self._folder_cache = None  # Cached folder list
 
@@ -230,10 +256,15 @@ def sync_status() -> str:
     try:
         st = _get_client()
 
+        # Get own device ID to filter it out of connection list
+        my_id = st.get_system_status().get("myID", "")
+
         # Connection status
         conns = st.get_connections().get("connections", {})
         online_devices = []
         for dev_id, info in conns.items():
+            if dev_id == my_id:
+                continue  # Skip self
             if info.get("connected"):
                 name = info.get("clientVersion", "unknown")
                 online_devices.append(f"  🟢 {dev_id[:12]}... ({name})")
