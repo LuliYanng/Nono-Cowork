@@ -28,10 +28,6 @@ declare global {
         deviceId: string;
         deviceName?: string;
       }) => Promise<{ success: boolean; added: boolean; error?: string }>;
-      syncthingEnsureFolders: (args: {
-        vpsDeviceId: string;
-        folders: Array<{ id: string; label: string; path: string }>;
-      }) => Promise<{ success: boolean; created: string[]; skipped: string[]; error?: string }>;
       syncthingRuntimeInfo: () => Promise<{
         success: boolean;
         managed: boolean;
@@ -39,6 +35,18 @@ declare global {
         configPath: string;
         processAlive: boolean;
       }>;
+      // Sync folder management
+      dialogSelectFolder: () => Promise<{ success: boolean; path?: string; canceled?: boolean }>;
+      syncthingAddFolder: (args: {
+        localPath: string;
+        vpsDeviceId: string;
+      }) => Promise<{ success: boolean; folderId: string; folderLabel: string; localPath: string; alreadyExists: boolean; error?: string }>;
+      syncthingListSyncFolders: (args: {
+        vpsDeviceId: string;
+      }) => Promise<{ success: boolean; folders: Array<{ id: string; label: string; path: string }>; error?: string }>;
+      syncthingRemoveFolder: (args: {
+        folderId: string;
+      }) => Promise<{ success: boolean; error?: string }>;
       getAppConfig: () => Promise<Record<string, string>>;
       saveAppConfig: (config: Record<string, string>) => Promise<{ success: boolean }>;
       reloadWindow: () => Promise<{ success: boolean }>;
@@ -63,6 +71,7 @@ import {
   PromptInputFooter,
   PromptInputSubmit,
 } from "@/components/ai-elements/prompt-input";
+import { SyncFolderWidget } from "@/components/sync-folder-widget";
 import {
   Reasoning,
   ReasoningContent,
@@ -437,7 +446,7 @@ function App() {
   const [unreadCount, setUnreadCount] = useState(0);
 
   // Sync status (sidebar indicator)
-  const { state: syncState } = useSyncStatus(API_BASE, () => authHeaders());
+  const { status: syncStatus, state: syncState } = useSyncStatus(API_BASE, () => authHeaders());
 
   // Settings dialog
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -484,14 +493,6 @@ function App() {
         deviceName: `Nono CoWork (${host})`,
       });
 
-      // Step 4: Ensure VPS shared folders are mirrored locally
-      const vpsFolders = pair?.folders;
-      if (electron.syncthingEnsureFolders && Array.isArray(vpsFolders) && vpsFolders.length > 0) {
-        await electron.syncthingEnsureFolders({
-          vpsDeviceId,
-          folders: vpsFolders,
-        });
-      }
     } catch {
       // Silent fallback: auto-pair is best-effort and should not block the app
     } finally {
@@ -1150,6 +1151,13 @@ function App() {
                     />
                     <PromptInputFooter>
                       <div className="flex items-center gap-1">
+                        {/* Sync Folder */}
+                        <SyncFolderWidget
+                          apiBase={API_BASE}
+                          getHeaders={() => authHeaders()}
+                          syncState={syncState}
+                          vpsDeviceId={syncStatus?.device_id || ""}
+                        />
                         {/* Model Selector */}
                         <ModelSelector open={modelSelectorOpen} onOpenChange={(open) => {
                           setModelSelectorOpen(open);
@@ -1401,6 +1409,13 @@ function App() {
                     />
                     <PromptInputFooter>
                       <div className="flex items-center gap-1">
+                        {/* Sync Folder */}
+                        <SyncFolderWidget
+                          apiBase={API_BASE}
+                          getHeaders={() => authHeaders()}
+                          syncState={syncState}
+                          vpsDeviceId={syncStatus?.device_id || ""}
+                        />
                         {/* Model Selector */}
                         <ModelSelector open={modelSelectorOpen} onOpenChange={(open) => {
                           setModelSelectorOpen(open);

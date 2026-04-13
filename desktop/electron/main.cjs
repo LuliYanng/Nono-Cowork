@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -293,7 +293,7 @@ async function ensureLocalSyncthingRemoteDevice(deviceId, deviceName) {
     await syncthingRequest('POST', '/rest/config/devices', {
       deviceID: trimmedId,
       name,
-      autoAcceptFolders: true,
+      autoAcceptFolders: false,
     });
   }
 
@@ -301,60 +301,75 @@ async function ensureLocalSyncthingRemoteDevice(deviceId, deviceName) {
 }
 
 /**
- * Ensure VPS shared folders exist on the local Syncthing instance.
- *
- * For each folder the VPS shares, check if a local folder with the same ID
- * already exists. If not, create it with a sensible local path under ~/Nono-Sync/.
- * If it exists but doesn't include the VPS device, add the device to it.
+ * Generate a short random folder ID for Syncthing (e.g. "nono-a3f7b").
  */
-async function ensureLocalSyncthingFolders(vpsDeviceId, vpsFolders) {
-  if (!vpsDeviceId || !Array.isArray(vpsFolders) || vpsFolders.length === 0) {
-    return { created: [], skipped: [] };
+function generateFolderId() {
+  const hex = require('crypto').randomBytes(4).toString('hex');
+  return `nono-${hex}`;
+}
+
+/**
+ * Add a local folder to Syncthing and share it with the VPS device.
+ * Returns { folderId, folderLabel, localPath }.
+ */
+async function addLocalSyncFolder(localPath, vpsDeviceId) {
+  if (!localPath || !vpsDeviceId) {
+    throw new Error('Missing localPath or vpsDeviceId');
   }
 
-  const localFolders = await syncthingRequest('GET', '/rest/config/folders');
-  const localFolderIds = new Set(
-    (Array.isArray(localFolders) ? localFolders : []).map((f) => f.id)
+  const folderLabel = path.basename(localPath);
+  const folderId = generateFolderId();
+
+  // Check if this path is already synced
+  const existing = await syncthingRequest('GET', '/rest/config/folders');
+  const folders = Array.isArray(existing) ? existing : [];
+  const alreadySynced = folders.find(
+    (f) => path.resolve(f.path) === path.resolve(localPath)
   );
-
-  const created = [];
-  const skipped = [];
-
-  for (const vf of vpsFolders) {
-    if (!vf.id) continue;
-
-    if (localFolderIds.has(vf.id)) {
-      // Folder exists — ensure VPS device is in its device list
-      const existing = (Array.isArray(localFolders) ? localFolders : []).find((f) => f.id === vf.id);
-      if (existing) {
-        const deviceIds = new Set((existing.devices || []).map((d) => d.deviceID));
-        if (!deviceIds.has(vpsDeviceId)) {
-          const devices = [...(existing.devices || []), { deviceID: vpsDeviceId }];
-          await syncthingRequest('PATCH', `/rest/config/folders/${vf.id}`, { devices });
-        }
-      }
-      skipped.push(vf.id);
-      continue;
-    }
-
-    // Create new folder with a local path under ~/Nono-Sync/
-    const localPath = path.join(os.homedir(), 'Nono-Sync', vf.label || vf.id);
-    // Ensure directory exists
-    fs.mkdirSync(localPath, { recursive: true });
-
-    await syncthingRequest('POST', '/rest/config/folders', {
-      id: vf.id,
-      label: vf.label || vf.id,
-      path: localPath,
-      devices: [{ deviceID: vpsDeviceId }],
-      rescanIntervalS: 60,
-      fsWatcherEnabled: true,
-      fsWatcherDelayS: 1,
-    });
-    created.push(vf.id);
+  if (alreadySynced) {
+    return {
+      folderId: alreadySynced.id,
+      folderLabel: alreadySynced.label || alreadySynced.id,
+      localPath: alreadySynced.path,
+      alreadyExists: true,
+    };
   }
 
-  return { created, skipped };
+  await syncthingRequest('POST', '/rest/config/folders', {
+    id: folderId,
+    label: folderLabel,
+    path: localPath,
+    devices: [{ deviceID: vpsDeviceId }],
+    rescanIntervalS: 60,
+    fsWatcherEnabled: true,
+    fsWatcherDelayS: 1,
+  });
+
+  return { folderId, folderLabel, localPath, alreadyExists: false };
+}
+
+/**
+ * List all Syncthing folders that are shared with a specific device.
+ */
+async function listSyncFolders(vpsDeviceId) {
+  const folders = await syncthingRequest('GET', '/rest/config/folders');
+  if (!Array.isArray(folders)) return [];
+
+  return folders
+    .filter((f) => (f.devices || []).some((d) => d.deviceID === vpsDeviceId))
+    .map((f) => ({
+      id: f.id,
+      label: f.label || f.id,
+      path: f.path,
+    }));
+}
+
+/**
+ * Remove a synced folder from local Syncthing config.
+ */
+async function removeSyncFolder(folderId) {
+  await syncthingRequest('DELETE', `/rest/config/folders/${folderId}`);
+  return { removed: true };
 }
 
 function createWindow() {
@@ -500,13 +515,46 @@ function createWindow() {
     }
   });
 
-  // Ensure VPS shared folders are mirrored locally
-  ipcMain.handle('syncthing-ensure-folders', async (_event, args = {}) => {
+
+  // Open system folder picker dialog
+  ipcMain.handle('dialog-select-folder', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: 'Select folder to sync with Agent',
+    });
+    if (result.canceled || !result.filePaths.length) {
+      return { success: false, canceled: true };
+    }
+    return { success: true, path: result.filePaths[0] };
+  });
+
+  // Add a local folder to Syncthing, shared with VPS
+  ipcMain.handle('syncthing-add-folder', async (_event, args = {}) => {
     try {
-      const result = await ensureLocalSyncthingFolders(args.vpsDeviceId, args.folders);
+      const result = await addLocalSyncFolder(args.localPath, args.vpsDeviceId);
       return { success: true, ...result };
     } catch (err) {
-      return { success: false, created: [], skipped: [], error: err.message };
+      return { success: false, error: err.message };
+    }
+  });
+
+  // List folders synced with VPS
+  ipcMain.handle('syncthing-list-sync-folders', async (_event, args = {}) => {
+    try {
+      const folders = await listSyncFolders(args.vpsDeviceId);
+      return { success: true, folders };
+    } catch (err) {
+      return { success: false, folders: [], error: err.message };
+    }
+  });
+
+  // Remove a synced folder
+  ipcMain.handle('syncthing-remove-folder', async (_event, args = {}) => {
+    try {
+      const result = await removeSyncFolder(args.folderId);
+      return { success: true, ...result };
+    } catch (err) {
+      return { success: false, error: err.message };
     }
   });
 

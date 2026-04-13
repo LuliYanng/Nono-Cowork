@@ -15,8 +15,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   syncthingLocalFolders: () => ipcRenderer.invoke('syncthing-local-folders'),
   syncthingLocalDevice: () => ipcRenderer.invoke('syncthing-local-device'),
   syncthingEnsureRemoteDevice: (args) => ipcRenderer.invoke('syncthing-ensure-remote-device', args),
-  syncthingEnsureFolders: (args) => ipcRenderer.invoke('syncthing-ensure-folders', args),
   syncthingRuntimeInfo: () => ipcRenderer.invoke('syncthing-runtime-info'),
+
+  // Sync folder management
+  dialogSelectFolder: () => ipcRenderer.invoke('dialog-select-folder'),
+  syncthingAddFolder: (args) => ipcRenderer.invoke('syncthing-add-folder', args),
+  syncthingListSyncFolders: (args) => ipcRenderer.invoke('syncthing-list-sync-folders', args),
+  syncthingRemoveFolder: (args) => ipcRenderer.invoke('syncthing-remove-folder', args),
 
   // App config (VPS connection persistence)
   getAppConfig: () => ipcRenderer.invoke('get-app-config'),

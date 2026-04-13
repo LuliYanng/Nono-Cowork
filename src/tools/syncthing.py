@@ -95,6 +95,12 @@ class SyncthingClient:
         r.raise_for_status()
         return r.json() if r.content else {}
 
+    def _delete(self, path):
+        """DELETE request."""
+        r = requests.delete(f"{self.url}{path}", headers=self.headers, timeout=10)
+        r.raise_for_status()
+        return r.json() if r.content else {}
+
     def _patch(self, path, data):
         """PATCH with a JSON body (for config updates)."""
         r = requests.patch(
