@@ -181,7 +181,7 @@ def compress_history(history: list, prompt_tokens: int) -> list:
 def _call_summary_llm(conversation_text: str) -> str | None:
     """Call a cheap LLM to generate the conversation summary."""
     try:
-        from llm import call_llm
+        from core.llm import call_llm
 
         messages = [
             {"role": "user", "content": _COMPRESS_PROMPT.format(conversation=conversation_text)},

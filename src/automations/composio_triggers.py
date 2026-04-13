@@ -267,7 +267,7 @@ _full_trigger_prompt: str | None = None
 def _get_trigger_prompt() -> str:
     global _full_trigger_prompt
     if _full_trigger_prompt is None:
-        from card_extractor import REPORT_RESULT_PROMPT
+        from delivery.card_extractor import REPORT_RESULT_PROMPT
         _full_trigger_prompt = _DEFAULT_TRIGGER_PROMPT + REPORT_RESULT_PROMPT
     return _full_trigger_prompt
 
@@ -307,7 +307,7 @@ def _handle_trigger_event(data):
             model = (recipe or {}).get("model", "")
 
             # Always append REPORT_RESULT_PROMPT so agent outputs structured JSON
-            from card_extractor import REPORT_RESULT_PROMPT
+            from delivery.card_extractor import REPORT_RESULT_PROMPT
             agent_prompt = base_prompt
             if REPORT_RESULT_PROMPT not in agent_prompt:
                 agent_prompt = base_prompt + "\n\n" + REPORT_RESULT_PROMPT
@@ -350,7 +350,7 @@ def _run_autonomous_agent(
     Returns the agent's response, or None if the agent decided to skip.
     """
     from subagent import get_provider
-    from notifications import notification_store
+    from delivery.notifications import notification_store
     from tools import build_restricted_tools
 
     # Build restricted tool set if tool_access is specified

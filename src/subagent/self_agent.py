@@ -8,7 +8,7 @@ window so the main agent's conversation history is not affected.
 import os
 import logging
 from subagent.base import SubagentProvider
-from session import _serialize_history
+from core.session import _serialize_history
 
 logger = logging.getLogger("subagent.self")
 
@@ -39,7 +39,7 @@ class SelfAgentProvider(SubagentProvider):
                          tools_override: list[dict] = None,
                          ) -> tuple[str, list, dict]:
         # Lazy import to avoid circular dependency (agent → tools → subagent → agent)
-        from agent import agent_loop
+        from core.agent import agent_loop
         from config import COMPRESSION_MODEL
 
         # Priority: explicit param > COMPRESSION_MODEL default

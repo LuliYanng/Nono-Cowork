@@ -74,8 +74,8 @@ def list_routines() -> str:
 
     # ── Cron tasks ──
     try:
-        from scheduler.store import list_tasks
-        from scheduler.engine import scheduler
+        from automations.scheduler.store import list_tasks
+        from automations.scheduler.engine import scheduler
 
         tasks = list_tasks()  # All tasks, no user filter (single-user system)
         for t in tasks:
@@ -99,7 +99,7 @@ def list_routines() -> str:
 
     # ── Trigger recipes ──
     try:
-        from composio_triggers import _load_recipes, is_enabled as composio_enabled
+        from automations.composio_triggers import _load_recipes, is_enabled as composio_enabled
 
         if composio_enabled():
             recipes = _load_recipes()
@@ -135,7 +135,7 @@ def list_routines() -> str:
 
     # ── File-drop rules ──
     try:
-        from file_drop import list_rules
+        from automations.file_drop import list_rules
         rules = list_rules()
         for r in rules:
             status = "✅ Enabled" if r.get("enabled", True) else "⏸️ Paused"
@@ -302,8 +302,8 @@ def _create_cron_routine(name, prompt, cron, model, tool_access, ctx,
     if not cron:
         return "❌ Missing `cron` parameter for cron routine."
 
-    from scheduler.store import create_task
-    from scheduler.engine import scheduler
+    from automations.scheduler.store import create_task
+    from automations.scheduler.engine import scheduler
 
     try:
         task = create_task(
@@ -339,7 +339,7 @@ def _create_trigger_routine(name, prompt, trigger_slug, trigger_config,
     if not trigger_slug:
         return "❌ Missing `trigger_slug` parameter for trigger routine. Use composio_list_triggers to find available slugs."
 
-    from composio_triggers import create_trigger, is_enabled
+    from automations.composio_triggers import create_trigger, is_enabled
 
     if not is_enabled():
         return "❌ Composio is not enabled. Set COMPOSIO_API_KEY in .env."
@@ -376,7 +376,7 @@ def _create_file_drop_routine(name, prompt, path_pattern, file_actions,
     if not path_pattern:
         return "❌ Missing `path_pattern` parameter for file_drop routine. Example: '翻译/*' or '报销/*.pdf'"
 
-    from file_drop import create_rule
+    from automations.file_drop import create_rule
 
     rule = create_rule(
         name=name,
@@ -473,8 +473,8 @@ def update_routine(id: str, name: str = None, cron: str = None,
 def _update_cron_routine(id, name, cron, prompt, model, enabled,
                          notify_channels=None) -> str:
     """Update a cron routine."""
-    from scheduler.store import get_task, update_task
-    from scheduler.engine import scheduler
+    from automations.scheduler.store import get_task, update_task
+    from automations.scheduler.engine import scheduler
 
     task = get_task(id)
     if not task:
@@ -530,7 +530,7 @@ def _update_cron_routine(id, name, cron, prompt, model, enabled,
 
 def _update_trigger_routine(id, prompt, model) -> str:
     """Update a trigger routine's recipe."""
-    from composio_triggers import _load_recipes, _save_recipes
+    from automations.composio_triggers import _load_recipes, _save_recipes
 
     recipes = _load_recipes()
     recipe = recipes.get(id)
@@ -556,7 +556,7 @@ def _update_trigger_routine(id, prompt, model) -> str:
 
 def _update_file_drop_routine(id, name, prompt, model, enabled) -> str:
     """Update a file-drop routine."""
-    from file_drop import get_rule, update_rule
+    from automations.file_drop import get_rule, update_rule
 
     rule = get_rule(id)
     if not rule:
@@ -634,7 +634,7 @@ def _delete_routine(id) -> str:
     rtype = _detect_routine_type(id)
 
     if rtype == "trigger":
-        from composio_triggers import delete_trigger, is_enabled
+        from automations.composio_triggers import delete_trigger, is_enabled
         if not is_enabled():
             return "❌ Composio is not enabled."
         result = delete_trigger(id)
@@ -647,7 +647,7 @@ def _delete_routine(id) -> str:
             return result
 
     elif rtype == "file_drop":
-        from file_drop import get_rule, delete_rule
+        from automations.file_drop import get_rule, delete_rule
         rule = get_rule(id)
         if not rule:
             return f"❌ File-drop routine '{id}' not found."
@@ -655,8 +655,8 @@ def _delete_routine(id) -> str:
         return f"✅ File-drop routine '{id}' ({rule['name']}) deleted."
 
     else:
-        from scheduler.store import get_task, delete_task
-        from scheduler.engine import scheduler
+        from automations.scheduler.store import get_task, delete_task
+        from automations.scheduler.engine import scheduler
 
         task = get_task(id)
         if not task:
@@ -680,8 +680,8 @@ def _toggle_routine(id) -> str:
 
 def _toggle_cron(id) -> str:
     """Toggle a cron routine on/off."""
-    from scheduler.store import get_task, update_task
-    from scheduler.engine import scheduler
+    from automations.scheduler.store import get_task, update_task
+    from automations.scheduler.engine import scheduler
 
     task = get_task(id)
     if not task:
@@ -702,7 +702,7 @@ def _toggle_cron(id) -> str:
 
 def _toggle_trigger(id) -> str:
     """Toggle a trigger routine (enable ↔ disable on Composio)."""
-    from composio_triggers import _load_recipes, _save_recipes, is_enabled
+    from automations.composio_triggers import _load_recipes, _save_recipes, is_enabled
 
     if not is_enabled():
         return "❌ Composio is not enabled."
@@ -777,7 +777,7 @@ def _toggle_trigger(id) -> str:
 
 def _toggle_file_drop(id) -> str:
     """Toggle a file-drop routine on/off."""
-    from file_drop import get_rule, update_rule
+    from automations.file_drop import get_rule, update_rule
 
     rule = get_rule(id)
     if not rule:
@@ -796,8 +796,8 @@ def _run_routine(id) -> str:
     if rtype != "cron":
         return f"❌ Manual execution is only available for cron routines, not {rtype}s."
 
-    from scheduler.store import get_task
-    from scheduler.executor import execute_task
+    from automations.scheduler.store import get_task
+    from automations.scheduler.executor import execute_task
 
     task = get_task(id)
     if not task:

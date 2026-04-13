@@ -7,7 +7,7 @@ Not supported: # headings, tables
 """
 
 import re
-from formatter import clean_agent_output
+from delivery.formatter import clean_agent_output
 
 
 def _adapt_md_for_telegram(text: str) -> str:

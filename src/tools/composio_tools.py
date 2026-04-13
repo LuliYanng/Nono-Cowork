@@ -205,7 +205,7 @@ def wait_for_connection(toolkit: str, timeout: int = None) -> dict:
         ctx = get_context()
         user_id = ctx.get("user_id")
         if user_id:
-            from session import sessions
+            from core.session import sessions
             _is_stopped = lambda: sessions.is_stopped(user_id)
     except Exception:
         pass

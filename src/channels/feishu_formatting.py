@@ -6,7 +6,7 @@ Feishu cards support: **bold**, *italic*, ~~strikethrough~~, lists, `code`, code
 """
 
 import re
-from formatter import clean_agent_output
+from delivery.formatter import clean_agent_output
 
 
 def _adapt_md_for_feishu(text: str) -> str:

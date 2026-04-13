@@ -40,7 +40,7 @@ def _is_enabled():
 def composio_list_triggers(toolkit: str) -> str:
     if not _is_enabled():
         return '{"error": "Composio is not enabled. Set COMPOSIO_API_KEY in .env."}'
-    from composio_triggers import list_available_triggers
+    from automations.composio_triggers import list_available_triggers
     return list_available_triggers(toolkit)
 
 

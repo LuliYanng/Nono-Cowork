@@ -126,7 +126,7 @@ def delegate(
         # Clear subagent stop flag so main agent can continue normally
         # (only relevant when user clicked "Stop Subagent", not full stop)
         if user_id:
-            from session import sessions
+            from core.session import sessions
             sessions.clear_subagent_stop(user_id)
 
     return f"[Subagent: {selected.name}]\n\n{result}"

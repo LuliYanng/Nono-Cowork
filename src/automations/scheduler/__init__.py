@@ -6,6 +6,6 @@ Provides:
   - store: task persistence (create_task/list_tasks/delete_task/update_task)
 """
 
-from scheduler.engine import scheduler
+from automations.scheduler.engine import scheduler
 
 __all__ = ["scheduler"]

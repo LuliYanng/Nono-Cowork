@@ -10,8 +10,8 @@ from abc import ABC, abstractmethod
 import threading
 import time
 import logging
-from agent_runner import run_agent_for_message
-from session import sessions
+from core.agent_runner import run_agent_for_message
+from core.session import sessions
 from config import MODEL, MODEL_POOL, CONTEXT_LIMIT, OWNER_USER_ID
 
 logger = logging.getLogger("channel")

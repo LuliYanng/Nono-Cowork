@@ -292,7 +292,7 @@ class FileDropEngine:
                 }
 
                 # Append REPORT_RESULT_PROMPT for structured output
-                from card_extractor import REPORT_RESULT_PROMPT
+                from delivery.card_extractor import REPORT_RESULT_PROMPT
                 full_prompt = agent_prompt
                 if REPORT_RESULT_PROMPT not in full_prompt:
                     full_prompt = agent_prompt + "\n\n" + REPORT_RESULT_PROMPT
@@ -333,7 +333,7 @@ class FileDropEngine:
 
                 # Store notification and distribute
                 from config import OWNER_USER_ID
-                from notifications import notification_store
+                from delivery.notifications import notification_store
 
                 deliver_to = [rule["channel_name"]] if rule.get("channel_name") else None
                 notification_store.create(
@@ -408,7 +408,7 @@ def start_file_drop_listener():
     Called by main.py at startup, AFTER start_watcher().
     Safe to call even if Syncthing watcher is not running (silently skips).
     """
-    from syncthing_watcher import get_event_buffer
+    from integrations.syncthing_watcher import get_event_buffer
 
     buffer = get_event_buffer()
     if buffer is None:

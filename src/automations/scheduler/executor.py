@@ -28,13 +28,13 @@ def execute_task(task: dict):
 def _run_task(task: dict):
     """Internal: run the task synchronously (called inside a thread)."""
     import time
-    from agent import agent_loop
-    from prompt import make_system_prompt
-    from llm import make_empty_token_stats
+    from core.agent import agent_loop
+    from core.prompt import make_system_prompt
+    from core.llm import make_empty_token_stats
     from logger import create_log_file, log_event, close_log_file
     from channels.registry import get_channel
-    from scheduler.store import update_task
-    from session import _serialize_history
+    from automations.scheduler.store import update_task
+    from core.session import _serialize_history
 
     task_id = task["id"]
     task_name = task["task_name"]
@@ -215,7 +215,7 @@ def _store_notification(
 ):
     """Store scheduled task result via NotificationStore."""
     try:
-        from notifications import notification_store
+        from delivery.notifications import notification_store
         notification_store.create(
             source_type="schedule",
             source_id=task_id,

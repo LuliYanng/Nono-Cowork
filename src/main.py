@@ -52,10 +52,10 @@ def _safe_channel_loop(channel):
 
 def main():
     from logger import recover_orphaned_logs
-    from session import sessions
+    from core.session import sessions
     from channels.registry import register_channel
-    from scheduler import scheduler
-    from composio_triggers import start_listener as start_trigger_listener
+    from automations.scheduler import scheduler
+    from automations.composio_triggers import start_listener as start_trigger_listener
 
     # ── 1. Shared initialization (once for all channels) ──
     logging.basicConfig(
@@ -67,18 +67,18 @@ def main():
     recover_orphaned_logs()
     atexit.register(sessions.close_all)
     atexit.register(scheduler.stop)
-    from syncthing_watcher import stop_watcher as stop_sync_watcher
+    from integrations.syncthing_watcher import stop_watcher as stop_sync_watcher
     atexit.register(stop_sync_watcher)
 
     # ── 2. Shared services (once) ──
     scheduler.start()
     start_trigger_listener()
 
-    from syncthing_watcher import start_watcher as start_sync_watcher
+    from integrations.syncthing_watcher import start_watcher as start_sync_watcher
     start_sync_watcher()
 
     # File-drop automation (must start AFTER sync watcher)
-    from file_drop import start_file_drop_listener
+    from automations.file_drop import start_file_drop_listener
     start_file_drop_listener()
 
     # ── 3. Create and register channels ──

@@ -126,7 +126,7 @@ class SessionManager:
 
     def _create_new_session(self, user_id: str) -> dict:
         """Create a brand new session."""
-        from prompt import make_system_prompt
+        from core.prompt import make_system_prompt
         from logger import create_log_file, log_event
 
         session_id = _generate_session_id()
@@ -233,7 +233,7 @@ class SessionManager:
         })
 
         # Regenerate system prompt (picks up fresh time, memory, service status)
-        from prompt import make_system_prompt
+        from core.prompt import make_system_prompt
         history = data.get("history", [])
         if history and history[0].get("role") == "system":
             history[0] = {"role": "system", "content": make_system_prompt()}

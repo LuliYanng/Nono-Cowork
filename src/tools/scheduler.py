@@ -80,8 +80,8 @@ def create_scheduled_task(task_name: str, cron: str, task_prompt: str,
     if err:
         return err
 
-    from scheduler.store import create_task
-    from scheduler.engine import scheduler
+    from automations.scheduler.store import create_task
+    from automations.scheduler.engine import scheduler
 
     try:
         task = create_task(
@@ -121,8 +121,8 @@ def list_scheduled_tasks() -> str:
     if err:
         return err
 
-    from scheduler.store import list_tasks
-    from scheduler.engine import scheduler
+    from automations.scheduler.store import list_tasks
+    from automations.scheduler.engine import scheduler
 
     tasks = list_tasks()  # single-owner system, no filter needed
     if not tasks:
@@ -167,8 +167,8 @@ def delete_scheduled_task(task_id: str) -> str:
     if err:
         return err
 
-    from scheduler.store import get_task, delete_task
-    from scheduler.engine import scheduler
+    from automations.scheduler.store import get_task, delete_task
+    from automations.scheduler.engine import scheduler
 
     # Verify ownership
     task = get_task(task_id)
@@ -226,8 +226,8 @@ def update_scheduled_task(task_id: str, cron: str = None,
     if err:
         return err
 
-    from scheduler.store import get_task, update_task
-    from scheduler.engine import scheduler
+    from automations.scheduler.store import get_task, update_task
+    from automations.scheduler.engine import scheduler
 
     # Verify ownership
     task = get_task(task_id)

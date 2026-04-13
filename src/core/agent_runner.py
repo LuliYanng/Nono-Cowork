@@ -4,9 +4,9 @@ Agent runner — shared Agent invocation logic for all IM channels
 Responsibilities: session management, concurrency control, calling agent_loop, extracting replies
 """
 import logging
-from session import sessions
+from core.session import sessions
 from context import set_context, clear_context
-from syncthing_watcher import get_sync_context
+from integrations.syncthing_watcher import get_sync_context
 
 logger = logging.getLogger("agent_runner")
 
@@ -30,7 +30,7 @@ def run_agent_for_message(user_id: str, user_text: str,
         channel_name: Channel name (for logging)
         on_event_hook: Optional callback for structured agent events: on_event_hook(evt)
     """
-    from agent import agent_loop
+    from core.agent import agent_loop
     from logger import log_event
 
     lock = sessions.get_lock(user_id)

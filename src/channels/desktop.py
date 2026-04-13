@@ -26,7 +26,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from channels.base import Channel, SLASH_COMMANDS
 from channels.registry import register_channel
-from session import sessions, _serialize_history
+from core.session import sessions, _serialize_history
 from config import MODEL, MODEL_POOL, CONTEXT_LIMIT, OWNER_USER_ID
 
 logger = logging.getLogger("channel.desktop")
@@ -78,7 +78,7 @@ class DesktopChannel(Channel):
         This overrides the base dispatch to add a 'done' event at the end
         and to capture on_event callbacks for richer SSE streaming.
         """
-        from agent_runner import run_agent_for_message
+        from core.agent_runner import run_agent_for_message
 
         def reply_func(text):
             self.send_reply(user_id, text)
@@ -495,7 +495,7 @@ async def command(cmd: str, request: Request):
 async def inject_mock_notifications():
     """DEV ONLY: inject sample notifications for UI development."""
     import json as _json
-    from notifications import notification_store
+    from delivery.notifications import notification_store
 
     # Helper: build a report_result tool call message
     def _report_call(call_id: str, card: dict):
@@ -630,7 +630,7 @@ async def list_notifications(
     status: str = None, limit: int = 50, offset: int = 0
 ):
     """List notifications for the desktop user."""
-    from notifications import notification_store
+    from delivery.notifications import notification_store
     notifs, total = notification_store.list(
         DESKTOP_USER_ID, status=status, limit=limit, offset=offset,
     )
@@ -641,7 +641,7 @@ async def list_notifications(
 @app.get("/api/notifications/unread-count")
 async def notifications_unread_count():
     """Get the unread notification count (for badges)."""
-    from notifications import notification_store
+    from delivery.notifications import notification_store
     return {"count": notification_store.unread_count(DESKTOP_USER_ID)}
 
 
@@ -653,7 +653,7 @@ async def notifications_stream():
     persistent connection that stays open while the frontend is active.
     New notifications are pushed as 'new_notification' events.
     """
-    from notifications import notification_store
+    from delivery.notifications import notification_store
 
     sub_queue = notification_store.subscribe(DESKTOP_USER_ID)
 
@@ -683,7 +683,7 @@ async def notifications_stream():
 @app.get("/api/notifications/{notification_id}")
 async def get_notification(notification_id: str):
     """Get a single notification's details."""
-    from notifications import notification_store
+    from delivery.notifications import notification_store
     notif = notification_store.get(notification_id)
     if not notif:
         return JSONResponse({"error": "Notification not found"}, status_code=404)
@@ -693,7 +693,7 @@ async def get_notification(notification_id: str):
 @app.put("/api/notifications/{notification_id}/read")
 async def mark_notification_read(notification_id: str):
     """Mark a notification as read."""
-    from notifications import notification_store
+    from delivery.notifications import notification_store
     ok = notification_store.mark_read(notification_id)
     if not ok:
         return JSONResponse({"error": "Notification not found"}, status_code=404)
@@ -703,7 +703,7 @@ async def mark_notification_read(notification_id: str):
 @app.put("/api/notifications/read-all")
 async def mark_all_notifications_read():
     """Mark all notifications as read."""
-    from notifications import notification_store
+    from delivery.notifications import notification_store
     count = notification_store.mark_all_read(DESKTOP_USER_ID)
     return {"message": f"Marked {count} notifications as read", "count": count}
 
@@ -711,7 +711,7 @@ async def mark_all_notifications_read():
 @app.delete("/api/notifications/{notification_id}")
 async def delete_notification(notification_id: str):
     """Delete a notification and its autonomous session."""
-    from notifications import notification_store
+    from delivery.notifications import notification_store
     ok = notification_store.delete(notification_id)
     if not ok:
         return JSONResponse({"error": "Notification not found"}, status_code=404)
@@ -730,7 +730,7 @@ async def execute_notification_action(notification_id: str, request: Request):
     """
     import json as _json
     from datetime import datetime, timezone
-    from notifications import notification_store
+    from delivery.notifications import notification_store
 
     body = await request.json()
     action_type = body.get("action_type")
@@ -828,7 +828,7 @@ async def get_notification_session(notification_id: str):
     Returns the full conversation history (session-compatible format)
     for review or to continue chatting.
     """
-    from notifications import notification_store
+    from delivery.notifications import notification_store
     notif = notification_store.get(notification_id)
     if not notif:
         return JSONResponse({"error": "Notification not found"}, status_code=404)
@@ -1089,8 +1089,8 @@ async def list_channels_api():
 @app.get("/api/tasks")
 async def list_tasks_api():
     """List all scheduled (cron) tasks."""
-    from scheduler.store import list_tasks
-    from scheduler import scheduler as task_scheduler
+    from automations.scheduler.store import list_tasks
+    from automations.scheduler import scheduler as task_scheduler
 
     tasks = list_tasks()
     result = []
@@ -1109,8 +1109,8 @@ async def create_task_api(request: Request):
 
     Body: {task_name, cron, task_prompt, channel_name?, model?, tool_access?, notify_channels?}
     """
-    from scheduler.store import create_task
-    from scheduler import scheduler as task_scheduler
+    from automations.scheduler.store import create_task
+    from automations.scheduler import scheduler as task_scheduler
 
     chunk = await request.json()
     body = chunk
@@ -1150,8 +1150,8 @@ async def create_task_api(request: Request):
 @app.get("/api/tasks/{task_id}")
 async def get_task_api(task_id: str):
     """Get a single scheduled task by ID."""
-    from scheduler.store import get_task
-    from scheduler import scheduler as task_scheduler
+    from automations.scheduler.store import get_task
+    from automations.scheduler import scheduler as task_scheduler
 
     task = get_task(task_id)
     if not task:
@@ -1166,8 +1166,8 @@ async def update_task_api(task_id: str, request: Request):
 
     Body: {task_name?, cron?, task_prompt?, enabled?, model?, tool_access?, notify_channels?}
     """
-    from scheduler.store import get_task, update_task
-    from scheduler import scheduler as task_scheduler
+    from automations.scheduler.store import get_task, update_task
+    from automations.scheduler import scheduler as task_scheduler
 
     task = get_task(task_id)
     if not task:
@@ -1205,8 +1205,8 @@ async def update_task_api(task_id: str, request: Request):
 @app.patch("/api/tasks/{task_id}/toggle")
 async def toggle_task_api(task_id: str):
     """Toggle a task's enabled/disabled state."""
-    from scheduler.store import get_task, update_task
-    from scheduler import scheduler as task_scheduler
+    from automations.scheduler.store import get_task, update_task
+    from automations.scheduler import scheduler as task_scheduler
 
     task = get_task(task_id)
     if not task:
@@ -1222,8 +1222,8 @@ async def toggle_task_api(task_id: str):
 @app.delete("/api/tasks/{task_id}")
 async def delete_task_api(task_id: str):
     """Delete a scheduled task permanently."""
-    from scheduler.store import get_task, delete_task
-    from scheduler import scheduler as task_scheduler
+    from automations.scheduler.store import get_task, delete_task
+    from automations.scheduler import scheduler as task_scheduler
 
     task = get_task(task_id)
     if not task:
@@ -1237,8 +1237,8 @@ async def delete_task_api(task_id: str):
 @app.post("/api/tasks/{task_id}/run")
 async def run_task_now_api(task_id: str):
     """Manually trigger a task to run now (one-off execution)."""
-    from scheduler.store import get_task
-    from scheduler.executor import execute_task
+    from automations.scheduler.store import get_task
+    from automations.scheduler.executor import execute_task
 
     task = get_task(task_id)
     if not task:
@@ -1253,7 +1253,7 @@ async def run_task_now_api(task_id: str):
 @app.get("/api/triggers")
 async def list_triggers_api():
     """List all trigger recipes (local) merged with Composio active status."""
-    from composio_triggers import _load_recipes, is_enabled
+    from automations.composio_triggers import _load_recipes, is_enabled
 
     if not is_enabled():
         return {"triggers": [], "total": 0, "composio_enabled": False}
@@ -1299,7 +1299,7 @@ async def list_triggers_api():
 @app.get("/api/triggers/{trigger_id}")
 async def get_trigger_api(trigger_id: str):
     """Get a single trigger recipe's details."""
-    from composio_triggers import _load_recipes
+    from automations.composio_triggers import _load_recipes
 
     recipes = _load_recipes()
     recipe = recipes.get(trigger_id)
@@ -1325,7 +1325,7 @@ async def create_trigger_api(request: Request):
 
     Body: {trigger_slug, agent_prompt, trigger_config?, model?, tool_access?, channel_name?}
     """
-    from composio_triggers import create_trigger, is_enabled
+    from automations.composio_triggers import create_trigger, is_enabled
 
     if not is_enabled():
         return JSONResponse({"error": "Composio not enabled"}, status_code=400)
@@ -1372,7 +1372,7 @@ async def update_trigger_api(trigger_id: str, request: Request):
     Body: {agent_prompt?, model?, channel_name?}
     Note: trigger_slug and trigger_config cannot be changed after creation.
     """
-    from composio_triggers import _load_recipes, _save_recipes
+    from automations.composio_triggers import _load_recipes, _save_recipes
 
     recipes = _load_recipes()
     recipe = recipes.get(trigger_id)
@@ -1406,7 +1406,7 @@ async def toggle_trigger_api(trigger_id: str):
     Disabling removes the trigger from Composio (stops events).
     Enabling re-creates it with the stored recipe config.
     """
-    from composio_triggers import _load_recipes, _save_recipes, is_enabled as composio_enabled
+    from automations.composio_triggers import _load_recipes, _save_recipes, is_enabled as composio_enabled
 
     if not composio_enabled():
         return JSONResponse({"error": "Composio not enabled"}, status_code=400)
@@ -1484,7 +1484,7 @@ async def toggle_trigger_api(trigger_id: str):
 @app.delete("/api/triggers/{trigger_id}")
 async def delete_trigger_api(trigger_id: str):
     """Delete a trigger: disable on Composio + remove local recipe."""
-    from composio_triggers import _load_recipes, _save_recipes, is_enabled as composio_enabled
+    from automations.composio_triggers import _load_recipes, _save_recipes, is_enabled as composio_enabled
 
     recipes = _load_recipes()
     if trigger_id not in recipes:
@@ -1526,9 +1526,9 @@ async def list_automations_api():
       - next_run_at: ISO timestamp or null (cron only)
       - config: type-specific full config
     """
-    from scheduler.store import list_tasks
-    from scheduler import scheduler as task_scheduler
-    from composio_triggers import _load_recipes, is_enabled as composio_enabled
+    from automations.scheduler.store import list_tasks
+    from automations.scheduler import scheduler as task_scheduler
+    from automations.composio_triggers import _load_recipes, is_enabled as composio_enabled
 
     items = []
 
@@ -1589,7 +1589,7 @@ async def list_automations_api():
 
     # ── File-drop rules ──
     try:
-        from file_drop import list_rules
+        from automations.file_drop import list_rules
         for r in list_rules():
             items.append({
                 "id": r["id"],
@@ -1652,8 +1652,8 @@ async def create_automation_api(request: Request):
 
     if atype == "cron":
         # Delegate to existing create task logic
-        from scheduler.store import create_task
-        from scheduler import scheduler as task_scheduler
+        from automations.scheduler.store import create_task
+        from automations.scheduler import scheduler as task_scheduler
 
         task_name = body.get("task_name", body.get("name", "")).strip()
         cron = body.get("cron", body.get("schedule", "")).strip()
@@ -1682,7 +1682,7 @@ async def create_automation_api(request: Request):
 
     elif atype == "trigger":
         # Delegate to existing create trigger logic
-        from composio_triggers import create_trigger, is_enabled as composio_enabled
+        from automations.composio_triggers import create_trigger, is_enabled as composio_enabled
         import json as _json
 
         if not composio_enabled():
@@ -1715,7 +1715,7 @@ async def create_automation_api(request: Request):
             return JSONResponse({"error": str(e)}, status_code=500)
 
     elif atype == "file_drop":
-        from file_drop import create_rule
+        from automations.file_drop import create_rule
 
         name = body.get("name", "").strip()
         path_pattern = body.get("path_pattern", body.get("schedule", "")).strip()
@@ -1748,8 +1748,8 @@ async def get_automation_api(automation_id: str):
     atype = _detect_automation_type(automation_id)
 
     if atype == "cron":
-        from scheduler.store import get_task
-        from scheduler import scheduler as task_scheduler
+        from automations.scheduler.store import get_task
+        from automations.scheduler import scheduler as task_scheduler
         task = get_task(automation_id)
         if not task:
             return JSONResponse({"error": "Cron task not found"}, status_code=404)
@@ -1757,7 +1757,7 @@ async def get_automation_api(automation_id: str):
         return {**task, "type": "cron", "next_run_at": next_run}
 
     elif atype == "trigger":
-        from composio_triggers import _load_recipes
+        from automations.composio_triggers import _load_recipes
         recipes = _load_recipes()
         recipe = recipes.get(automation_id)
         if not recipe:
@@ -1765,7 +1765,7 @@ async def get_automation_api(automation_id: str):
         return {"id": automation_id, "type": "trigger", **recipe}
 
     elif atype == "file_drop":
-        from file_drop import get_rule
+        from automations.file_drop import get_rule
         rule = get_rule(automation_id)
         if not rule:
             return JSONResponse({"error": "File-drop rule not found"}, status_code=404)
@@ -1782,8 +1782,8 @@ async def update_automation_api(automation_id: str, request: Request):
     atype = _detect_automation_type(automation_id)
 
     if atype == "cron":
-        from scheduler.store import get_task, update_task
-        from scheduler import scheduler as task_scheduler
+        from automations.scheduler.store import get_task, update_task
+        from automations.scheduler import scheduler as task_scheduler
 
         task = get_task(automation_id)
         if not task:
@@ -1816,7 +1816,7 @@ async def update_automation_api(automation_id: str, request: Request):
             return JSONResponse({"error": str(e)}, status_code=400)
 
     elif atype == "trigger":
-        from composio_triggers import _load_recipes, _save_recipes
+        from automations.composio_triggers import _load_recipes, _save_recipes
         recipes = _load_recipes()
         recipe = recipes.get(automation_id)
         if not recipe:
@@ -1840,7 +1840,7 @@ async def update_automation_api(automation_id: str, request: Request):
         return {"id": automation_id, "type": "trigger", **recipe, "message": "Updated"}
 
     elif atype == "file_drop":
-        from file_drop import get_rule, update_rule
+        from automations.file_drop import get_rule, update_rule
 
         rule = get_rule(automation_id)
         if not rule:
@@ -1871,8 +1871,8 @@ async def toggle_automation_api(automation_id: str):
     atype = _detect_automation_type(automation_id)
 
     if atype == "cron":
-        from scheduler.store import get_task, update_task
-        from scheduler import scheduler as task_scheduler
+        from automations.scheduler.store import get_task, update_task
+        from automations.scheduler import scheduler as task_scheduler
 
         task = get_task(automation_id)
         if not task:
@@ -1889,7 +1889,7 @@ async def toggle_automation_api(automation_id: str):
         return await toggle_trigger_api(automation_id)
 
     elif atype == "file_drop":
-        from file_drop import get_rule, update_rule
+        from automations.file_drop import get_rule, update_rule
 
         rule = get_rule(automation_id)
         if not rule:
@@ -1906,8 +1906,8 @@ async def delete_automation_api(automation_id: str):
     atype = _detect_automation_type(automation_id)
 
     if atype == "cron":
-        from scheduler.store import get_task, delete_task
-        from scheduler import scheduler as task_scheduler
+        from automations.scheduler.store import get_task, delete_task
+        from automations.scheduler import scheduler as task_scheduler
 
         task = get_task(automation_id)
         if not task:
@@ -1921,7 +1921,7 @@ async def delete_automation_api(automation_id: str):
         return await delete_trigger_api(automation_id)
 
     elif atype == "file_drop":
-        from file_drop import get_rule, delete_rule
+        from automations.file_drop import get_rule, delete_rule
 
         rule = get_rule(automation_id)
         if not rule:
@@ -1937,8 +1937,8 @@ async def run_automation_api(automation_id: str):
     if atype != "cron":
         return JSONResponse({"error": f"Manual run is only available for cron automations, not {atype}"}, status_code=400)
 
-    from scheduler.store import get_task
-    from scheduler.executor import execute_task
+    from automations.scheduler.store import get_task
+    from automations.scheduler.executor import execute_task
 
     task = get_task(automation_id)
     if not task:
@@ -1954,7 +1954,7 @@ def main():
     import atexit
     import uvicorn
     from logger import recover_orphaned_logs
-    from scheduler import scheduler
+    from automations.scheduler import scheduler
 
     logging.basicConfig(
         level=logging.INFO,
@@ -1974,7 +1974,7 @@ def main():
     scheduler.start()
 
     # Start Composio trigger listener (if enabled)
-    from composio_triggers import start_listener as start_trigger_listener
+    from automations.composio_triggers import start_listener as start_trigger_listener
     start_trigger_listener()
 
     print("=" * 50)

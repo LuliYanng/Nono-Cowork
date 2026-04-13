@@ -221,7 +221,7 @@ class NotificationStore:
             system_prompt: the system prompt used for the subagent
             deliver_to: channel names to push to; None = desktop only
         """
-        from card_extractor import extract_card_data
+        from delivery.card_extractor import extract_card_data
 
         title = generate_title(source_type, source_name, event_data)
         category = infer_category(source_type, source_name)

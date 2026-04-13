@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 
 from channels.base import Channel
 from channels.telegram_formatting import format_for_telegram, escape_markdown_v2
-from formatter import split_long_text
+from delivery.formatter import split_long_text
 
 load_dotenv()
 
@@ -193,9 +193,9 @@ class TelegramChannel(Channel):
 def main():
     import atexit
     from logger import recover_orphaned_logs
-    from session import sessions
+    from core.session import sessions
     from channels.registry import register_channel
-    from scheduler import scheduler
+    from automations.scheduler import scheduler
 
     logging.basicConfig(
         level=logging.INFO,
@@ -215,7 +215,7 @@ def main():
     scheduler.start()
 
     # Start Composio trigger listener (if enabled)
-    from composio_triggers import start_listener as start_trigger_listener
+    from automations.composio_triggers import start_listener as start_trigger_listener
     start_trigger_listener()
 
     channel.start()

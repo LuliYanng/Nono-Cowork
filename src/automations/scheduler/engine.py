@@ -2,7 +2,7 @@
 Scheduler engine — APScheduler-based cron scheduler with persistent task recovery.
 
 Usage:
-    from scheduler import scheduler
+    from automations.scheduler import scheduler
     scheduler.start()   # Call once at application startup
     scheduler.stop()    # Call at shutdown
 """
@@ -11,8 +11,8 @@ import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from scheduler.store import list_tasks, get_task
-from scheduler.executor import execute_task
+from automations.scheduler.store import list_tasks, get_task
+from automations.scheduler.executor import execute_task
 
 logger = logging.getLogger("scheduler.engine")
 
