@@ -47,6 +47,7 @@ website/
 *.excalidraw
 
 .claude
+*.png
 
 # embedded syncthing runtime (generated)
 desktop/electron/vendor/syncthing/windows-amd64/syncthing.exe
