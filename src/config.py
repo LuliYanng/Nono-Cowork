@@ -41,7 +41,7 @@ CACHE_CONTROL_PROVIDERS = {"dashscope/", "anthropic/"}
 # ── Context Compression ──
 COMPRESSION_THRESHOLD = 0.7         # Trigger compression when context usage exceeds this ratio
 COMPRESSION_KEEP_RECENT_TURNS = 4   # Number of recent conversation turns to keep uncompressed
-COMPRESSION_MODEL = "dashscope/qwen3.5-122b-a10b"  # Cheap model for generating summaries
+COMPRESSION_MODEL = "openrouter/minimax/minimax-m2.7"  # Cheap model for generating summaries
 
 # ── Tool Output Spill ──
 TOOL_OUTPUT_MAX_CHARS = 3000        # Max chars per tool output before spilling to file

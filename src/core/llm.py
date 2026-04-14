@@ -51,13 +51,17 @@ def _build_llm_kwargs(messages: list, model: str = None, tools: list = None) -> 
         kwargs["tool_choice"] = "auto"
 
     # Determine provider prefix (e.g. "gemini", "anthropic", "deepseek")
-    _provider = model.split("/", 1)[0] if _has_provider_prefix else ""
+    # For OpenRouter-routed models (e.g. "openrouter/anthropic/claude-..."),
+    # also extract the underlying provider from the second segment.
+    _parts = model.split("/") if _has_provider_prefix else []
+    _provider = _parts[0] if _parts else ""
+    _sub_provider = _parts[1] if len(_parts) >= 3 else ""
 
     # Enable thinking/reasoning for models that support it
     # LiteLLM maps reasoning_effort to Gemini's thinking_level automatically
     # drop_params=True ensures this is safely ignored by models that don't support it
     _THINKING_PROVIDERS = {"gemini", "anthropic"}
-    if _provider in _THINKING_PROVIDERS:
+    if _provider in _THINKING_PROVIDERS or _sub_provider in _THINKING_PROVIDERS:
         kwargs["reasoning_effort"] = "medium"  # "low" or "high"; Gemini 3 can't fully disable
 
     # Only pass custom API_BASE/API_KEY for OpenAI-compatible mode.
