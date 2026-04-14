@@ -19,7 +19,9 @@ MODEL_POOL = [
     "openai/gpt-5.1",
     "moonshotai/kimi-k2",
     "deepseek/deepseek-chat",
-    "openrouter/minimax/minimax-m2.7"
+    "openrouter/minimax/minimax-m2.7",
+    "openrouter/anthropic/claude-sonnet-4.6",
+    "openrouter/anthropic/claude-haiku-4.5"
 ]
 MODEL = os.getenv("MODEL", "openrouter/minimax/minimax-m2.7")
 API_BASE = os.getenv("API_BASE", "").strip()   # Custom OpenAI-compatible endpoint
