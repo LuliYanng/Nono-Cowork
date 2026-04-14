@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   FolderSync,
   FolderOpen,
@@ -68,15 +69,28 @@ export function SyncFolderWidget({
   const [folders, setFolders] = useState<SyncedFolder[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [showPanel, setShowPanel] = useState(false);
+  const [panelPos, setPanelPos] = useState({ bottom: 0, left: 0 });
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Recalculate panel position whenever it opens
+  useEffect(() => {
+    if (!showPanel || !buttonRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    setPanelPos({
+      bottom: window.innerHeight - rect.top + 6,
+      left: rect.left,
+    });
+  }, [showPanel]);
 
   // Close panel on outside click
   useEffect(() => {
     if (!showPanel) return;
     const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        setShowPanel(false);
-      }
+      const target = e.target as Node;
+      const clickedPanel = panelRef.current?.contains(target);
+      const clickedButton = buttonRef.current?.contains(target);
+      if (!clickedPanel && !clickedButton) setShowPanel(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -212,10 +226,14 @@ export function SyncFolderWidget({
   if (!hasElectron) return null;
 
   return (
-    <div className="relative" ref={panelRef}>
-      {/* Sync folder panel — above the button */}
-      {showPanel && folders.length > 0 && (
-        <div className="absolute bottom-full left-0 mb-1.5 w-72 bg-background border border-border/50 rounded-lg shadow-xl overflow-hidden z-50">
+    <>
+      {/* Panel rendered into document.body via portal — escapes any overflow:hidden parent */}
+      {showPanel && folders.length > 0 && createPortal(
+        <div
+          ref={panelRef}
+          style={{ position: "fixed", bottom: panelPos.bottom, left: panelPos.left }}
+          className="w-72 bg-background border border-border/50 rounded-lg shadow-xl overflow-hidden z-[9999]"
+        >
           <div className="px-3 py-2 border-b border-border/30 flex items-center justify-between">
             <span className="text-[11px] font-medium text-foreground/70">
               Synced Folders
@@ -235,9 +253,7 @@ export function SyncFolderWidget({
               >
                 <FolderOpen size={14} className="text-muted-foreground/60 shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <div className="text-[12px] text-foreground truncate">
-                    {f.label}
-                  </div>
+                  <div className="text-[12px] text-foreground truncate">{f.label}</div>
                   <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
                     {stateIcon(f.state)}
                     <span>{stateLabel(f.state, f.completion)}</span>
@@ -253,26 +269,23 @@ export function SyncFolderWidget({
               </div>
             ))}
           </div>
-          {/* Add more button inside panel */}
           <button
             onClick={handleAddFolder}
             disabled={isAdding || isDisconnected}
             className="w-full px-3 py-2 border-t border-border/30 text-[11px] text-muted-foreground/60 hover:text-foreground hover:bg-muted/30 transition-colors flex items-center gap-2 disabled:opacity-40"
           >
-            {isAdding ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <FolderSync size={12} />
-            )}
+            {isAdding ? <Loader2 size={12} className="animate-spin" /> : <FolderSync size={12} />}
             Add another folder
           </button>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Main button */}
       <Tooltip>
         <TooltipTrigger asChild>
           <button
+            ref={buttonRef}
             onClick={folders.length > 0 ? () => setShowPanel((v) => !v) : handleAddFolder}
             disabled={isAdding || isDisconnected}
             className="relative flex items-center justify-center h-6 w-6 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
@@ -282,7 +295,6 @@ export function SyncFolderWidget({
             ) : (
               <FolderSync size={14} />
             )}
-            {/* Badge showing folder count */}
             {folders.length > 0 && (
               <span className="absolute -top-1 -right-1 flex items-center justify-center h-3.5 min-w-[14px] rounded-full bg-blue-500 text-[8px] text-white font-medium px-0.5">
                 {folders.length}
@@ -298,6 +310,6 @@ export function SyncFolderWidget({
               : "Sync a folder with Agent"}
         </TooltipContent>
       </Tooltip>
-    </div>
+    </>
   );
 }
