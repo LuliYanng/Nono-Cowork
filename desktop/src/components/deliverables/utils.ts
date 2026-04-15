@@ -78,6 +78,14 @@ class SyncPathResolver {
         continue;
       }
       const local = localFolders.find((l) => l.id === remote.id);
+      
+      // Also apply defense for the local side config. Local syncthing might
+      // retain broken configs with ~ paths (which become literal relative dirs on Windows)
+      if (local && (local.path === "~" || local.path.startsWith("~/") || local.path.startsWith("~\\"))) {
+        console.warn(`[SyncPaths] Skipping local folder with unexpanded path: ${local.path}`);
+        continue;
+      }
+
       if (local) {
         this.mappings.push({
           id: remote.id,
