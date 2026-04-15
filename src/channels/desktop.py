@@ -1172,6 +1172,85 @@ async def get_sync_status():
             "folders": [],
         }
 
+
+@app.get("/api/sync/events")
+async def list_sync_events(minutes: int = 30, limit: int = 20):
+    """List recent file-level sync events from the Syncthing event buffer.
+
+    These are per-file events (added/modified/deleted) detected from the
+    user's remote device, tracked by the SyncthingEventWatcher daemon.
+
+    Query params:
+        minutes: Time window in minutes (default: 30)
+        limit:   Max events to return (default: 20)
+
+    Returns: {
+        events: [{
+            path: str,           # Relative path within sync folder
+            abs_path: str,       # Absolute path on VPS
+            action: str,         # "added" | "modified" | "deleted"
+            state: str,          # "syncing" | "done" | "error"
+            progress: int|null,  # 0-100 if syncing, null otherwise
+            time_ago: str,       # Human-readable time ("Just now", "2 min ago")
+            timestamp: float,    # Unix timestamp
+            folder_id: str,      # Syncthing folder ID
+        }],
+        total_syncing: int,      # Number of files currently being synced
+    }
+    """
+    from integrations.syncthing_watcher import get_event_buffer, _format_time_ago
+
+    buffer = get_event_buffer()
+    if not buffer:
+        return {"events": [], "total_syncing": 0}
+
+    recent = buffer.get_recent(minutes=minutes, limit=limit)
+
+    events = []
+    syncing_count = 0
+    for e in recent:
+        # Determine current file state
+        import os as _os
+        if e.action == "deleted":
+            state = "done"
+            progress = None
+        elif e.abs_path and _os.path.exists(e.abs_path):
+            state = "done"
+            progress = None
+        else:
+            state = "syncing"
+            progress = 50  # Approximate — Syncthing doesn't give per-file %
+            syncing_count += 1
+
+        events.append({
+            "path": e.path,
+            "abs_path": e.abs_path,
+            "action": e.action,
+            "state": state,
+            "progress": progress,
+            "time_ago": _format_time_ago(e.timestamp),
+            "timestamp": e.timestamp,
+            "folder_id": e.folder_id,
+        })
+
+    # Also check for folder-level "need" files (files that haven't even
+    # triggered a RemoteChangeDetected event yet but are queued for download)
+    try:
+        from tools.syncthing import SyncthingClient
+        st = SyncthingClient()
+        for f in st.get_folders():
+            try:
+                fs = st.get_folder_status(f["id"])
+                need_files = fs.get("needFiles", 0)
+                syncing_count += need_files
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return {"events": events, "total_syncing": syncing_count}
+
+
 # ══════════════════════════════════════════════
 # RESTful: Automations (Cron Tasks + Triggers)
 # ══════════════════════════════════════════════

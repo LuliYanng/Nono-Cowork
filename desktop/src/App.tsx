@@ -415,7 +415,7 @@ function AgentStepGroup({ title, children, defaultOpen, isStreaming }: { title: 
         </span>
         <ChevronDown className="size-3.5 text-muted-foreground/50 transition-transform group-data-[open]/step:rotate-180" />
       </CollapsibleTrigger>
-      <CollapsibleContent className="overflow-hidden data-[closed]:animate-collapsible-up data-[open]:animate-collapsible-down">
+      <CollapsibleContent>
         <div className="flex flex-col gap-1 pl-2">
           {children}
         </div>

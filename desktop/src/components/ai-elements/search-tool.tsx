@@ -19,7 +19,7 @@ export function SearchStepGroup({
         <span className="text-left capitalize">{title}</span>
         <ChevronDown className="size-3.5 text-muted-foreground/50 transition-transform group-data-[open]/step:rotate-180" />
       </CollapsibleTrigger>
-      <CollapsibleContent className="overflow-hidden data-[closed]:animate-collapsible-up data-[open]:animate-collapsible-down pb-2">
+      <CollapsibleContent className="pb-2">
         <div className="flex flex-col gap-4 mt-2">
           {children}
         </div>
@@ -67,7 +67,7 @@ export function SearchToolCall({
           </span>
         )}
       </CollapsibleTrigger>
-      <CollapsibleContent className="overflow-hidden data-[closed]:animate-collapsible-up data-[open]:animate-collapsible-down">
+      <CollapsibleContent>
         <div className="pl-[24px] pr-2 pt-1 pb-2 w-full">
           <div className="flex flex-col border border-border/60 rounded-md overflow-hidden bg-background w-full shadow-sm">
             {parsedResults && parsedResults.length > 0 ? (

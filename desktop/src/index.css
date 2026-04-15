@@ -53,16 +53,13 @@
 [data-slot="collapsible-content"] {
   overflow: hidden;
   height: var(--collapsible-panel-height);
-  opacity: 1;
-  transition-property: height, opacity;
-  transition-duration: 0.25s;
-  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: height;
+  transition: height 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 [data-slot="collapsible-content"][data-starting-style],
 [data-slot="collapsible-content"][data-ending-style] {
   height: 0;
-  opacity: 0;
 }
 
 :root {

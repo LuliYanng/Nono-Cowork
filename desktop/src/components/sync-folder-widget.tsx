@@ -1,18 +1,59 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
-  FolderSync,
-  FolderOpen,
-  X,
+  FolderPlus,
+  Folder,
   Loader2,
-  CheckCircle2,
-  AlertCircle,
+  Check,
+  X,
+  RefreshCw,
+  ChevronRight,
+  Settings2,
 } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+
+// ── Status badge folder icon (matches pencil prototype: folder-icons-set) ──
+
+type SyncIconState = "syncing" | "idle" | "error";
+
+function SyncFolderIcon({ state, size = 16 }: { state: SyncIconState; size?: number }) {
+  const badgeSize = Math.round(size * 0.625); // 10px at 16px icon
+  const iconSize = Math.round(size * 0.5);    // 8px at 16px icon
+
+  const badgeConfig = {
+    syncing: { color: "#0B57D0", Icon: RefreshCw, animate: true },
+    idle:    { color: "#15A362", Icon: Check,     animate: false },
+    error:   { color: "#D14343", Icon: X,         animate: false },
+  }[state];
+
+  const { color, Icon, animate } = badgeConfig;
+
+  return (
+    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+      <Folder size={size} style={{ color: "#A8A6A4" }} />
+      {/* Status badge — bottom-right overlay */}
+      <div
+        style={{
+          position: "absolute",
+          right: -2,
+          bottom: -2,
+          width: badgeSize,
+          height: badgeSize,
+          borderRadius: "50%",
+          background: "#FFFFFF",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Icon
+          size={iconSize}
+          style={{ color }}
+          className={animate ? "animate-spin" : undefined}
+        />
+      </div>
+    </div>
+  );
+}
 
 // ── Types ──
 
@@ -24,38 +65,22 @@ interface SyncedFolder {
   completion: number;
 }
 
+interface SyncFileEvent {
+  path: string;
+  abs_path: string;
+  action: "added" | "modified" | "deleted";
+  state: "syncing" | "done" | "error";
+  progress: number | null;
+  time_ago: string;
+  timestamp: number;
+  folder_id: string;
+}
+
 interface SyncFolderWidgetProps {
   apiBase: string;
   getHeaders: () => Record<string, string>;
   syncState: "connected" | "syncing" | "disconnected" | "loading";
   vpsDeviceId: string;
-}
-
-// ── Helpers ──
-
-function stateIcon(state: SyncedFolder["state"]) {
-  switch (state) {
-    case "pending":
-    case "syncing":
-      return <Loader2 size={12} className="animate-spin text-blue-400" />;
-    case "idle":
-      return <CheckCircle2 size={12} className="text-emerald-500" />;
-    case "error":
-      return <AlertCircle size={12} className="text-red-400" />;
-  }
-}
-
-function stateLabel(state: SyncedFolder["state"], completion: number) {
-  switch (state) {
-    case "pending":
-      return "Preparing...";
-    case "syncing":
-      return `Syncing ${completion.toFixed(0)}%`;
-    case "idle":
-      return "Synced";
-    case "error":
-      return "Error";
-  }
 }
 
 // ── Component ──
@@ -67,11 +92,16 @@ export function SyncFolderWidget({
   vpsDeviceId,
 }: SyncFolderWidgetProps) {
   const [folders, setFolders] = useState<SyncedFolder[]>([]);
+  const [syncEvents, setSyncEvents] = useState<SyncFileEvent[]>([]);
+  const [totalSyncing, setTotalSyncing] = useState(0);
   const [isAdding, setIsAdding] = useState(false);
   const [showPanel, setShowPanel] = useState(false);
   const [panelPos, setPanelPos] = useState({ bottom: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Currently selected folder (first in list, or null)
+  const selectedFolder = folders[0] || null;
 
   // Recalculate panel position whenever it opens
   useEffect(() => {
@@ -127,13 +157,37 @@ export function SyncFolderWidget({
     }
   }, [apiBase, getHeaders]);
 
+  // Fetch real file-level sync events from backend
+  const fetchSyncEvents = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/api/sync/events?minutes=30&limit=10`, {
+        headers: getHeaders(),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setSyncEvents(data.events || []);
+      setTotalSyncing(data.total_syncing || 0);
+    } catch {
+      // Silently fail
+    }
+  }, [apiBase, getHeaders]);
+
   // Poll every 5s when panel is open or we have syncing folders
   useEffect(() => {
     fetchFolderStatus();
+    fetchSyncEvents();
     const hasSyncing = folders.some((f) => f.state === "syncing" || f.state === "pending");
-    const interval = setInterval(fetchFolderStatus, hasSyncing ? 3000 : 10000);
+    const interval = setInterval(() => {
+      fetchFolderStatus();
+      if (showPanel || hasSyncing) fetchSyncEvents();
+    }, hasSyncing ? 3000 : 10000);
     return () => clearInterval(interval);
-  }, [fetchFolderStatus, folders.some((f) => f.state === "syncing" || f.state === "pending")]);
+  }, [fetchFolderStatus, fetchSyncEvents, showPanel, folders.some((f) => f.state === "syncing" || f.state === "pending")]);
+
+  // Refresh sync events when panel opens
+  useEffect(() => {
+    if (showPanel) fetchSyncEvents();
+  }, [showPanel, fetchSyncEvents]);
 
   // ── Add folder flow ──
   const handleAddFolder = useCallback(async () => {
@@ -196,120 +250,274 @@ export function SyncFolderWidget({
     }
   }, [apiBase, getHeaders, vpsDeviceId, isAdding, fetchFolderStatus]);
 
-  // ── Remove folder ──
-  const handleRemoveFolder = useCallback(
-    async (folderId: string) => {
-      const electron = window.electronAPI;
-
-      // Remove from VPS
-      try {
-        await fetch(`${apiBase}/api/sync/folders/${folderId}`, {
-          method: "DELETE",
-          headers: getHeaders(),
-        });
-      } catch {}
-
-      // Remove from local Syncthing
-      try {
-        await electron?.syncthingRemoveFolder?.({ folderId });
-      } catch {}
-
-      setFolders((prev) => prev.filter((f) => f.id !== folderId));
-    },
-    [apiBase, getHeaders]
-  );
-
   const isDisconnected = syncState === "disconnected" || syncState === "loading";
   const hasElectron = !!window.electronAPI?.dialogSelectFolder;
 
   // Don't show the button at all if not in Electron
   if (!hasElectron) return null;
 
+  // Format path for display
+  const displayPath = selectedFolder?.localPath || "";
+
+  // Derive pill icon state from folders + sync events
+  const pillIconState: SyncIconState = (() => {
+    // Any folder or file with an error → error
+    const hasError = folders.some((f) => f.state === "error")
+      || syncEvents.some((e) => e.state === "error");
+    if (hasError) return "error";
+    // Any folder syncing/pending → syncing
+    const hasSyncing = folders.some((f) => f.state === "syncing" || f.state === "pending")
+      || syncEvents.some((e) => e.state === "syncing")
+      || totalSyncing > 0;
+    if (hasSyncing) return "syncing";
+    return "idle";
+  })();
+
+  // Get display events (max 4 for the popup, matching prototype)
+  const displayEvents = syncEvents.slice(0, 4);
+  const hasEvents = displayEvents.length > 0;
+
   return (
     <>
-      {/* Panel rendered into document.body via portal — escapes any overflow:hidden parent */}
-      {showPanel && folders.length > 0 && createPortal(
+      {/* folder-selector-pop panel via portal */}
+      {showPanel && createPortal(
         <div
           ref={panelRef}
           style={{ position: "fixed", bottom: panelPos.bottom, left: panelPos.left }}
-          className="w-72 bg-background border border-border/50 rounded-lg shadow-xl overflow-hidden z-[9999]"
+          className="z-[9999]"
         >
-          <div className="px-3 py-2 border-b border-border/30 flex items-center justify-between">
-            <span className="text-[11px] font-medium text-foreground/70">
-              Synced Folders
-            </span>
-            <button
-              onClick={() => setShowPanel(false)}
-              className="p-0.5 rounded hover:bg-muted text-muted-foreground/50 hover:text-foreground transition-colors"
-            >
-              <X size={12} />
-            </button>
-          </div>
-          <div className="max-h-48 overflow-y-auto">
-            {folders.map((f) => (
-              <div
-                key={f.id}
-                className="px-3 py-2 flex items-center gap-2 hover:bg-muted/30 group"
-              >
-                <FolderOpen size={14} className="text-muted-foreground/60 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[12px] text-foreground truncate">{f.label}</div>
-                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
-                    {stateIcon(f.state)}
-                    <span>{stateLabel(f.state, f.completion)}</span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleRemoveFolder(f.id)}
-                  className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/10 text-muted-foreground/40 hover:text-red-400 transition-all"
-                  title="Stop syncing"
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <button
-            onClick={handleAddFolder}
-            disabled={isAdding || isDisconnected}
-            className="w-full px-3 py-2 border-t border-border/30 text-[11px] text-muted-foreground/60 hover:text-foreground hover:bg-muted/30 transition-colors flex items-center gap-2 disabled:opacity-40"
+          <div
+            className="w-[280px] rounded-lg overflow-hidden"
+            style={{
+              background: "#FFFFFF",
+              border: "1px solid #EAE8E6",
+              boxShadow: "0 8px 24px rgba(0, 0, 0, 0.09)",
+              padding: 12,
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
           >
-            {isAdding ? <Loader2 size={12} className="animate-spin" /> : <FolderSync size={12} />}
-            Add another folder
-          </button>
+            {/* ── Recent folders section ── */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingBottom: 8 }}>
+              <div style={{ padding: "4px 8px" }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#8A8886", fontFamily: "Inter, sans-serif" }}>
+                  Recent
+                </span>
+              </div>
+
+              {/* Folder items */}
+              {folders.map((f) => (
+                <button
+                  type="button"
+                  key={f.id}
+                  className="w-full text-left transition-colors hover:bg-[#F7F6F5]"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "6px 8px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => setShowPanel(false)}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <Folder size={16} style={{ color: "#333333", flexShrink: 0 }} />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <span style={{ fontSize: 13, color: "#333333", fontFamily: "Inter, sans-serif" }}>
+                        {f.localPath}
+                      </span>
+                      <span style={{ fontSize: 11, color: "#8A8886", fontFamily: "Inter, sans-serif" }}>
+                        {f.localPath}
+                      </span>
+                    </div>
+                  </div>
+                  {f.id === selectedFolder?.id && (
+                    <Check size={16} style={{ color: "#0B57D0", flexShrink: 0 }} />
+                  )}
+                </button>
+              ))}
+
+              {/* No folders yet */}
+              {folders.length === 0 && (
+                <div style={{ padding: "6px 8px" }}>
+                  <span style={{ fontSize: 12, color: "#A8A6A4", fontFamily: "Inter, sans-serif" }}>
+                    No synced folders yet
+                  </span>
+                </div>
+              )}
+
+              {/* Choose a different folder */}
+              <button
+                type="button"
+                className="w-full text-left transition-colors hover:bg-[#F7F6F5]"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: 8,
+                  borderRadius: 6,
+                  border: "none",
+                  background: "transparent",
+                  cursor: isAdding || isDisconnected ? "not-allowed" : "pointer",
+                  opacity: isAdding || isDisconnected ? 0.4 : 1,
+                }}
+                onClick={handleAddFolder}
+                disabled={isAdding || isDisconnected}
+              >
+                {isAdding ? (
+                  <Loader2 size={16} className="animate-spin" style={{ color: "#333333", flexShrink: 0 }} />
+                ) : (
+                  <FolderPlus size={16} style={{ color: "#333333", flexShrink: 0 }} />
+                )}
+                <span style={{ fontSize: 13, color: "#333333", fontFamily: "Inter, sans-serif" }}>
+                  Choose a different folder
+                </span>
+              </button>
+
+              {/* Divider */}
+              <div style={{ height: 1, width: "100%", background: "#F7F6F5" }} />
+            </div>
+
+            {/* ── File Sync Status section ── */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: "#8A8886", fontFamily: "Inter, sans-serif" }}>
+                File Sync Status
+              </span>
+              <Settings2 size={12} style={{ color: "#A8A6A4", cursor: "pointer" }} />
+            </div>
+
+            {/* Divider */}
+            <div style={{ height: 1, width: "100%", background: "#F7F6F5" }} />
+
+            {/* File sync rows — real data from /api/sync/events */}
+            {hasEvents ? (
+              displayEvents.map((evt, i) => (
+                <div
+                  key={`${evt.path}-${i}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    width: "100%",
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0, flex: 1 }}>
+                    {evt.state === "syncing" && (
+                      <RefreshCw size={12} className="animate-spin" style={{ color: "#0B57D0", flexShrink: 0 }} />
+                    )}
+                    {evt.state === "done" && (
+                      <Check size={12} style={{ color: "#15A362", flexShrink: 0 }} />
+                    )}
+                    {evt.state === "error" && (
+                      <X size={12} style={{ color: "#D14343", flexShrink: 0 }} />
+                    )}
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color: evt.state === "done" || evt.state === "error" ? "#8A8886" : "#333333",
+                        fontFamily: "Inter, sans-serif",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {evt.path}
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: evt.state === "syncing" || evt.state === "error" ? 600 : "normal",
+                      color: evt.state === "syncing" ? "#0B57D0"
+                        : evt.state === "error" ? "#D14343"
+                        : "#A8A6A4",
+                      fontFamily: "Inter, sans-serif",
+                      flexShrink: 0,
+                      textAlign: "right",
+                    }}
+                  >
+                    {evt.state === "syncing" && `${evt.progress ?? 50}%`}
+                    {evt.state === "done" && (evt.time_ago || "Done")}
+                    {evt.state === "error" && "Fail"}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <div style={{ padding: "4px 0" }}>
+                <span style={{ fontSize: 12, color: "#A8A6A4", fontFamily: "Inter, sans-serif" }}>
+                  No recent sync activity
+                </span>
+              </div>
+            )}
+
+            {/* Divider + View all (only if there are events) */}
+            {hasEvents && (
+              <>
+                <div style={{ height: 1, width: "100%", background: "#F7F6F5" }} />
+                <button
+                  type="button"
+                  className="w-full transition-colors hover:bg-[#F7F6F5]"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "4px 0",
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    width: "100%",
+                  }}
+                >
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "#A8A6A4", fontFamily: "Inter, sans-serif" }}>
+                    {totalSyncing > 0
+                      ? `View all ${totalSyncing} syncing files...`
+                      : `View all ${syncEvents.length} recent files...`
+                    }
+                  </span>
+                  <ChevronRight size={12} style={{ color: "#D6D4D2" }} />
+                </button>
+              </>
+            )}
+          </div>
         </div>,
         document.body
       )}
 
-      {/* Main button */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            ref={buttonRef}
-            onClick={folders.length > 0 ? () => setShowPanel((v) => !v) : handleAddFolder}
-            disabled={isAdding || isDisconnected}
-            className="relative flex items-center justify-center h-6 w-6 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-          >
-            {isAdding ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <FolderSync size={14} />
-            )}
-            {folders.length > 0 && (
-              <span className="absolute -top-1 -right-1 flex items-center justify-center h-3.5 min-w-[14px] rounded-full bg-blue-500 text-[8px] text-white font-medium px-0.5">
-                {folders.length}
-              </span>
-            )}
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="text-xs">
-          {isDisconnected
-            ? "Sync unavailable — not connected"
-            : folders.length > 0
-              ? "Manage synced folders"
-              : "Sync a folder with Agent"}
-        </TooltipContent>
-      </Tooltip>
+      {/* ── Pill trigger button — transparent background, dynamic icon state ── */}
+      <button
+        type="button"
+        ref={buttonRef}
+        onClick={selectedFolder ? () => setShowPanel((v) => !v) : handleAddFolder}
+        disabled={isAdding || isDisconnected}
+        className="flex items-center gap-1.5 transition-colors rounded-md hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+        style={{
+          padding: "4px 8px",
+          border: "none",
+          background: "transparent",
+        }}
+      >
+        {isAdding ? (
+          <Loader2 size={16} className="animate-spin" style={{ color: "#5A5856" }} />
+        ) : selectedFolder ? (
+          <SyncFolderIcon state={pillIconState} size={16} />
+        ) : (
+          <Folder size={16} style={{ color: "#A8A6A4" }} />
+        )}
+        {selectedFolder ? (
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#5A5856", fontFamily: "Inter, sans-serif" }}>
+            {displayPath}
+          </span>
+        ) : (
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#5A5856", fontFamily: "Inter, sans-serif" }}>
+            Sync folder
+          </span>
+        )}
+      </button>
     </>
   );
 }

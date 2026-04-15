@@ -122,7 +122,7 @@ export type ToolContentProps = ComponentProps<typeof CollapsibleContent>;
 export const ToolContent = ({ className, ...props }: ToolContentProps) => (
   <CollapsibleContent
     className={cn(
-      "overflow-hidden outline-none data-[closed]:animate-collapsible-up data-[open]:animate-collapsible-down pl-[32px] pb-2",
+      "overflow-hidden outline-none pl-[32px] pb-2",
       className
     )}
   >

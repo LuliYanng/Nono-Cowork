@@ -212,12 +212,12 @@ export const ReasoningContent = memo(
   ({ className, children, ...props }: ReasoningContentProps) => (
     <CollapsibleContent
       className={cn(
-        "overflow-hidden outline-none data-[closed]:animate-collapsible-up data-[open]:animate-collapsible-down pl-[32px] pt-0.5 pb-2",
+        "overflow-hidden outline-none pl-[32px] pt-0.5 pb-2",
         className
       )}
       {...props}
     >
-      <div className="text-[13px] leading-relaxed text-muted-foreground/90">
+      <div className="text-[13px] leading-relaxed text-muted-foreground/90" style={{ contain: "content" }}>
         <Streamdown plugins={streamdownPlugins}>{children}</Streamdown>
       </div>
     </CollapsibleContent>
