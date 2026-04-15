@@ -84,6 +84,8 @@ import {
   ToolContent,
   ToolInput,
   ToolOutput,
+  StackedBrandLogos,
+  extractComposioToolkits,
 } from "@/components/ai-elements/tool";
 import { SearchToolCall } from "@/components/ai-elements/search-tool";
 import { useScrollAnchor } from "@/components/ai-elements/use-scroll-anchor";
@@ -377,7 +379,7 @@ function summarizeToolNames(toolNames: string[]): string | null {
   return segments.join(', ');
 }
 
-function AgentStepGroup({ title, children, defaultOpen, isStreaming }: { title: string, children: React.ReactNode, defaultOpen: boolean, isStreaming?: boolean }) {
+function AgentStepGroup({ title, toolkits, children, defaultOpen, isStreaming }: { title: string, toolkits?: string[], children: React.ReactNode, defaultOpen: boolean, isStreaming?: boolean }) {
   const [isOpen, setIsOpen] = useState(defaultOpen || !!isStreaming);
   const hasEverStreamedRef = useRef(!!isStreaming);
   const [hasAutoClosed, setHasAutoClosed] = useState(false);
@@ -409,7 +411,10 @@ function AgentStepGroup({ title, children, defaultOpen, isStreaming }: { title: 
 
   return (
     <Collapsible open={isOpen} onOpenChange={handleOpenChange} className="group/step w-full">
-      <CollapsibleTrigger className="flex w-full items-center gap-1 py-1.5 text-[13px] text-muted-foreground/80 hover:text-foreground transition-colors outline-none cursor-pointer">
+      <CollapsibleTrigger className="flex w-full items-center gap-2 py-1.5 text-[13px] text-muted-foreground/80 hover:text-foreground transition-colors outline-none cursor-pointer">
+        {toolkits && toolkits.length > 0 && (
+          <StackedBrandLogos toolkits={toolkits} size={24} />
+        )}
         <span className="text-left capitalize">
           {isStreaming ? <Shimmer duration={1}>{title}</Shimmer> : title}
         </span>
@@ -485,7 +490,7 @@ function PartsRenderer({
   defaultCollapsed?: boolean;
 }) {
   // First pass: build a flat list of typed items (reasoning, text, tool nodes)
-  type ItemNode = { kind: "reasoning" | "text" | "tool" | "search-tool"; node: React.ReactNode; round?: number; toolName?: string };
+  type ItemNode = { kind: "reasoning" | "text" | "tool" | "search-tool"; node: React.ReactNode; round?: number; toolName?: string; args?: Record<string, unknown> };
   const flatItems: ItemNode[] = [];
   let i = 0;
 
@@ -573,7 +578,11 @@ function PartsRenderer({
 
       let displayTitle = part.description || part.toolName || "tool";
       if (!part.description && part.args) {
-        if (typeof part.args.query === "string") displayTitle = part.args.query;
+        // Composio meta-tools carry a user-facing `thought` field — prefer it.
+        if (toolName.startsWith("COMPOSIO_") && typeof part.args.thought === "string" && part.args.thought.trim()) {
+          displayTitle = part.args.thought.trim();
+        }
+        else if (typeof part.args.query === "string") displayTitle = part.args.query;
         else if (typeof part.args.command === "string") displayTitle = part.args.command;
         else if (typeof part.args.path === "string") displayTitle = part.args.path;
         else if (typeof part.args.url === "string") displayTitle = part.args.url;
@@ -590,14 +599,15 @@ function PartsRenderer({
         flatItems.push({
           kind: "search-tool",
           node: (
-            <SearchToolCall 
-              key={`t-${i}`} 
-              query={displayTitle} 
-              resultString={hasResult && nextPart && nextPart.type === "tool_result" ? nextPart.result : undefined} 
+            <SearchToolCall
+              key={`t-${i}`}
+              query={displayTitle}
+              resultString={hasResult && nextPart && nextPart.type === "tool_result" ? nextPart.result : undefined}
             />
           ),
           round: part.round,
           toolName: part.toolName,
+          args: part.args,
         });
       } else {
         flatItems.push({
@@ -606,6 +616,7 @@ function PartsRenderer({
             <Tool key={`t-${i}`} defaultOpen={shouldOpen}>
               <ToolHeader
                 title={displayTitle}
+                input={part.args}
                 type={`tool-${part.toolName || "unknown"}` as `tool-${string}`}
                 state={toolState}
                 actions={delegateStopAction}
@@ -622,6 +633,7 @@ function PartsRenderer({
           ),
           round: part.round,
           toolName: part.toolName,
+          args: part.args,
         });
       }
 
@@ -646,7 +658,7 @@ function PartsRenderer({
   //   text       → flush container (if any), render flat
   //   tool       → container exists ? collect : create new container, collect
 
-  type ContainerItem = { kind: "tool" | "search-tool" | "reasoning"; node: React.ReactNode; toolName?: string };
+  type ContainerItem = { kind: "tool" | "search-tool" | "reasoning"; node: React.ReactNode; toolName?: string; args?: Record<string, unknown> };
   const output: React.ReactNode[] = [];
   let currentContainer: ContainerItem[] | null = null;
   let groupIdx = 0;
@@ -662,12 +674,23 @@ function PartsRenderer({
       .map(ci => ci.toolName)
       .filter(Boolean) as string[];
 
+    // Collect unique Composio toolkits from this group so AgentStepGroup
+    // can render their brand logos at the start of the title.
+    const toolkitSet = new Set<string>();
+    for (const ci of currentContainer) {
+      if (!ci.toolName) continue;
+      if (ci.toolName === "COMPOSIO_MULTI_EXECUTE_TOOL" && ci.args) {
+        for (const tk of extractComposioToolkits(ci.args)) toolkitSet.add(tk);
+      }
+    }
+    const toolkits = Array.from(toolkitSet);
+
     const summary = summarizeToolNames(toolNames) || "Used tools";
     // Active container (end-flush during streaming) stays open; completed ones collapse
     const containerStreaming = isEndFlush && !!(isActive || isStreaming);
 
     output.push(
-      <AgentStepGroup key={`group-${groupIdx}`} title={summary} defaultOpen={containerStreaming} isStreaming={containerStreaming}>
+      <AgentStepGroup key={`group-${groupIdx}`} title={summary} toolkits={toolkits} defaultOpen={containerStreaming} isStreaming={containerStreaming}>
         {currentContainer.map(ci => ci.node)}
       </AgentStepGroup>
     );
@@ -695,7 +718,7 @@ function PartsRenderer({
       if (currentContainer === null) {
         currentContainer = [];
       }
-      currentContainer.push({ kind: item.kind, node: item.node, toolName: item.toolName });
+      currentContainer.push({ kind: item.kind, node: item.node, toolName: item.toolName, args: item.args });
     }
   }
 
