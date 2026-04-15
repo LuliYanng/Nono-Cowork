@@ -424,6 +424,55 @@ function AgentStepGroup({ title, children, defaultOpen, isStreaming }: { title: 
   );
 }
 
+// ── Collapsible User Message ──
+// Collapses long user messages (>8 lines) with a gradient fade + "Show more" toggle
+function CollapsibleUserMessage({ content }: { content: string }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  // 8 lines × 20px line-height (text-sm = 14px font, 20px line-height)
+  const MAX_HEIGHT = 160;
+
+  useEffect(() => {
+    if (contentRef.current) {
+      setIsOverflowing(contentRef.current.scrollHeight > MAX_HEIGHT);
+    }
+  }, [content]);
+
+  return (
+    <div className="relative">
+      <div
+        ref={contentRef}
+        className="whitespace-pre-wrap transition-[max-height] duration-300 ease-in-out"
+        style={{
+          maxHeight: isExpanded || !isOverflowing ? undefined : `${MAX_HEIGHT}px`,
+          overflow: isExpanded || !isOverflowing ? undefined : "hidden",
+        }}
+      >
+        {content}
+      </div>
+      {/* Gradient fade overlay at the bottom of collapsed content */}
+      {isOverflowing && !isExpanded && (
+        <div
+          className="absolute bottom-0 left-0 right-0 h-12 pointer-events-none rounded-b-lg"
+          style={{
+            background: "linear-gradient(to top, var(--secondary) 0%, transparent 100%)",
+          }}
+        />
+      )}
+      {/* Show more / Show less toggle */}
+      {isOverflowing && (
+        <button
+          onClick={() => setIsExpanded((v) => !v)}
+          className="relative z-10 text-xs text-muted-foreground/70 hover:text-foreground transition-colors mt-1.5 cursor-pointer select-none"
+        >
+          {isExpanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function PartsRenderer({
   parts,
   isActive,
@@ -1638,7 +1687,7 @@ function App() {
                                   )}
                                 </>
                               ) : (
-                                <p className="whitespace-pre-wrap">{msg.content}</p>
+                                <CollapsibleUserMessage content={msg.content} />
                               )}
                             </MessageContent>
                           </Message>
