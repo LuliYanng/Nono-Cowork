@@ -123,6 +123,9 @@ def main():
     if desktop_info:
         import uvicorn
         _, app, port = desktop_info
+        # Kill any stale process occupying the port before binding
+        from channels.desktop import _kill_stale_port_holder
+        _kill_stale_port_holder(port)
         uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
     else:
         # No Desktop channel → keep the main thread alive

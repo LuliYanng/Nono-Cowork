@@ -1608,6 +1608,9 @@ async def toggle_trigger_api(trigger_id: str):
 
     recipes = _load_recipes()
     recipe = recipes.get(trigger_id)
+    # Auto-adopt orphan triggers (active on Composio but no local recipe)
+    if not recipe:
+        recipe = _adopt_orphan_trigger(trigger_id, recipes)
     if not recipe:
         return JSONResponse({"error": "Trigger recipe not found"}, status_code=404)
 
@@ -1682,21 +1685,26 @@ async def delete_trigger_api(trigger_id: str):
     from automations.composio_triggers import _load_recipes, _save_recipes, is_enabled as composio_enabled
 
     recipes = _load_recipes()
-    if trigger_id not in recipes:
-        return JSONResponse({"error": "Trigger not found"}, status_code=404)
+    has_local = trigger_id in recipes
 
-    # Try to disable on Composio (best-effort)
+    # Try to disable on Composio (best-effort — works for orphan triggers too)
+    disabled_on_cloud = False
     if composio_enabled():
         try:
             from composio import Composio
             client = Composio()
             client.triggers.disable(trigger_id=trigger_id)
+            disabled_on_cloud = True
         except Exception as e:
             logger.warning("Could not disable trigger on Composio: %s", e)
 
-    # Remove local recipe
-    del recipes[trigger_id]
-    _save_recipes(recipes)
+    # Remove local recipe if it exists
+    if has_local:
+        del recipes[trigger_id]
+        _save_recipes(recipes)
+
+    if not has_local and not disabled_on_cloud:
+        return JSONResponse({"error": "Trigger not found"}, status_code=404)
 
     return {"message": f"Trigger '{trigger_id}' deleted", "id": trigger_id}
 
@@ -1752,17 +1760,23 @@ async def list_automations_api():
     # ── Triggers ──
     if composio_enabled():
         recipes = _load_recipes()
-        # Quick active check
-        active_ids = set()
+        # Build active trigger map with full details (not just IDs)
+        active_map = {}
         try:
             from composio import Composio
             client = Composio()
             active_resp = client.triggers.list_active()
             for t in getattr(active_resp, 'items', active_resp):
-                active_ids.add(getattr(t, "id", None) or getattr(t, "trigger_id", str(t)))
+                tid = getattr(t, "id", None) or getattr(t, "trigger_id", str(t))
+                active_map[tid] = {
+                    "trigger_slug": getattr(t, "trigger_slug", getattr(t, "slug", "")),
+                    "status": getattr(t, "status", "ACTIVE"),
+                    "created_at": getattr(t, "created_at", ""),
+                }
         except Exception:
             pass
 
+        # Local recipes (with cloud active status)
         for trigger_id, recipe in recipes.items():
             items.append({
                 "id": trigger_id,
@@ -1770,7 +1784,7 @@ async def list_automations_api():
                 "name": recipe.get("trigger_slug", ""),
                 "description": (recipe.get("agent_prompt") or "")[:200],
                 "schedule": recipe.get("trigger_slug", ""),
-                "enabled": trigger_id in active_ids,
+                "enabled": trigger_id in active_map,
                 "model": recipe.get("model", ""),
                 "tool_access": recipe.get("tool_access", "full"),
                 "channel_name": recipe.get("channel_name", ""),
@@ -1781,6 +1795,28 @@ async def list_automations_api():
                 "next_run_at": None,
                 "config": recipe,  # full recipe
             })
+
+        # Orphan triggers: active on Composio cloud but no local recipe
+        for tid, info in active_map.items():
+            if tid not in recipes:
+                slug = info.get("trigger_slug", "Unknown Trigger")
+                items.append({
+                    "id": tid,
+                    "type": "trigger",
+                    "name": slug,
+                    "description": "\u26a0\ufe0f Active on Composio cloud (no local configuration)",
+                    "schedule": slug,
+                    "enabled": True,
+                    "model": "",
+                    "tool_access": "full",
+                    "channel_name": "",
+                    "channel_user_id": "",
+                    "created_at": info.get("created_at", ""),
+                    "last_run_at": None,
+                    "last_result": "",
+                    "next_run_at": None,
+                    "config": {"trigger_slug": slug, "orphan": True},
+                })
 
     # ── File-drop rules ──
     try:
@@ -1829,6 +1865,43 @@ def _detect_automation_type(automation_id: str) -> str:
     if automation_id.startswith("ti_"):
         return "trigger"
     return "cron"
+
+
+def _adopt_orphan_trigger(trigger_id: str, recipes: dict):
+    """Check if a trigger exists on Composio cloud and auto-create a local recipe.
+
+    Used to "adopt" orphan triggers that are active on Composio but have
+    no local recipe file (e.g., created via another channel or lost data).
+    Mutates `recipes` dict in place and persists to disk.
+    Returns the new recipe dict, or None if not found on cloud.
+    """
+    try:
+        from composio import Composio
+        from automations.composio_triggers import _save_recipes
+        client = Composio()
+        active_resp = client.triggers.list_active()
+        for t in getattr(active_resp, 'items', active_resp):
+            tid = getattr(t, "id", None) or getattr(t, "trigger_id", str(t))
+            if tid == trigger_id:
+                slug = getattr(t, "trigger_slug", getattr(t, "slug", "unknown"))
+                recipe = {
+                    "trigger_id": trigger_id,
+                    "trigger_slug": slug,
+                    "agent_prompt": "",
+                    "model": "",
+                    "tool_access": "full",
+                    "trigger_config": {},
+                    "channel_name": "desktop",
+                    "channel_user_id": DESKTOP_USER_ID,
+                    "created_at": getattr(t, "created_at", ""),
+                }
+                recipes[trigger_id] = recipe
+                _save_recipes(recipes)
+                logger.info("Auto-adopted orphan trigger: %s (%s)", trigger_id, slug)
+                return recipe
+    except Exception as e:
+        logger.warning("Could not adopt orphan trigger %s: %s", trigger_id, e)
+    return None
 
 
 @app.post("/api/automations")
@@ -2014,6 +2087,9 @@ async def update_automation_api(automation_id: str, request: Request):
         from automations.composio_triggers import _load_recipes, _save_recipes
         recipes = _load_recipes()
         recipe = recipes.get(automation_id)
+        # Auto-adopt orphan trigger on first edit
+        if not recipe:
+            recipe = _adopt_orphan_trigger(automation_id, recipes)
         if not recipe:
             return JSONResponse({"error": "Trigger not found"}, status_code=404)
 
@@ -2143,6 +2219,65 @@ async def run_automation_api(automation_id: str):
     return {"message": f"Task '{automation_id}' triggered", "id": automation_id}
 
 
+# ── Port cleanup ──
+
+def _kill_stale_port_holder(port: int) -> None:
+    """Kill any stale process occupying the given port.
+
+    This prevents the recurring 'Address already in use' crash loop
+    caused by orphaned desktop-agent processes surviving service restarts.
+    Only kills processes whose name contains 'desktop-agent' or 'python'
+    to avoid accidentally killing unrelated services.
+    """
+    import signal
+    import subprocess
+
+    try:
+        # Use ss to find the PID listening on the port
+        result = subprocess.run(
+            ["ss", "-tlnp", f"sport = :{port}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return
+
+        my_pid = os.getpid()
+        for line in result.stdout.splitlines():
+            if "LISTEN" not in line:
+                continue
+            # Extract pid from patterns like pid=12345
+            import re
+            for match in re.finditer(r"pid=(\d+)", line):
+                pid = int(match.group(1))
+                if pid == my_pid:
+                    continue
+                # Safety: only kill desktop-agent / python processes
+                try:
+                    cmdline = open(f"/proc/{pid}/cmdline", "rb").read().decode(errors="replace")
+                except (FileNotFoundError, PermissionError):
+                    continue
+                if "desktop-agent" in cmdline or "desktop" in cmdline:
+                    logger.warning(
+                        f"Killing stale process PID {pid} occupying port {port}"
+                    )
+                    os.kill(pid, signal.SIGTERM)
+                    # Give it a moment to exit gracefully
+                    import time
+                    time.sleep(1)
+                    # Force kill if still alive
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except OSError:
+                        pass  # Already dead
+                else:
+                    logger.error(
+                        f"Port {port} is occupied by non-desktop process PID {pid} "
+                        f"— refusing to kill. Please free the port manually."
+                    )
+    except Exception as e:
+        logger.warning(f"Port cleanup check failed (non-fatal): {e}")
+
+
 # ── Entry point ──
 
 def main():
@@ -2171,6 +2306,9 @@ def main():
     # Start Composio trigger listener (if enabled)
     from automations.composio_triggers import start_listener as start_trigger_listener
     start_trigger_listener()
+
+    # Kill any stale process occupying the port before binding
+    _kill_stale_port_holder(DESKTOP_PORT)
 
     print("=" * 50)
     print(f"🖥️  Desktop Channel started on http://0.0.0.0:{DESKTOP_PORT}")
