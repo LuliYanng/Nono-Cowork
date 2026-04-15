@@ -77,6 +77,7 @@ import {
   ReasoningContent,
   ReasoningTrigger,
 } from "@/components/ai-elements/reasoning";
+import { Shimmer } from "@/components/ai-elements/shimmer";
 import {
   Tool,
   ToolHeader,
@@ -84,6 +85,8 @@ import {
   ToolInput,
   ToolOutput,
 } from "@/components/ai-elements/tool";
+import { SearchToolCall } from "@/components/ai-elements/search-tool";
+import { useScrollAnchor } from "@/components/ai-elements/use-scroll-anchor";
 import { Sidebar, type SessionItem, type SidebarView } from "@/components/sidebar";
 import { type Notification, type Deliverable } from "@/components/notification-card";
 import { WorkspacePage } from "@/components/workspace-page";
@@ -113,8 +116,13 @@ import {
   ModelSelectorLogo,
   ModelSelectorName,
 } from "@/components/ai-elements/model-selector";
-import { PanelLeft, ChevronDown, Square, AlertCircle, RotateCcw } from "lucide-react";
+import { PanelLeft, ChevronDown, Square, AlertCircle, RotateCcw, WrenchIcon, ChevronRightIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
 // Map litellm provider names → ModelSelectorLogo provider names
 const PROVIDER_LOGO_MAP: Record<string, string> = {
@@ -151,7 +159,7 @@ type AvailableModels = string[];
 type MessagePart =
   | { type: "text"; content: string }
   | { type: "reasoning"; content: string }
-  | { type: "tool_call"; toolName?: string; args?: Record<string, unknown>; round: number }
+  | { type: "tool_call"; toolName?: string; args?: Record<string, unknown>; round: number; description?: string }
   | { type: "tool_result"; toolName?: string; result?: string; round: number };
 
 interface ChatMessage {
@@ -183,24 +191,52 @@ function convertHistoryToMessages(backendMessages: any[]): { messages: ChatMessa
     }
   }
 
+  // Accumulator: merge consecutive assistant messages into a single ChatMessage.
+  // This prevents models that don't output content between tool calls from
+  // creating many separate message bubbles with one tool each.
+  let accParts: MessagePart[] = [];
+  let accContent = "";
+  let accReasoning = "";
+  let accRound = 0;
+
+  const flushAssistant = () => {
+    if (accParts.length === 0 && !accContent && !accReasoning) return;
+    msgs.push({
+      id: `hist-${++counter}`,
+      role: "assistant",
+      content: accContent,
+      reasoning: accReasoning || undefined,
+      parts: accParts.length > 0 ? [...accParts] : undefined,
+    });
+    accParts = [];
+    accContent = "";
+    accReasoning = "";
+    accRound = 0;
+  };
+
   for (const msg of backendMessages) {
     if (msg.role === "user") {
+      flushAssistant();
       msgs.push({
         id: `hist-${++counter}`,
         role: "user",
         content: msg.content || "",
       });
     } else if (msg.role === "assistant") {
-      const parts: MessagePart[] = [];
-
-      // 1. Reasoning content → reasoning part (before text/tools)
+      // 1. Reasoning content → reasoning part
       if (msg.reasoning_content) {
-        parts.push({ type: "reasoning", content: msg.reasoning_content });
+        accParts.push({ type: "reasoning", content: msg.reasoning_content });
+        accReasoning = accReasoning
+          ? accReasoning + "\n\n" + msg.reasoning_content
+          : msg.reasoning_content;
       }
 
       // 2. Text content → text part
       if (msg.content) {
-        parts.push({ type: "text", content: msg.content });
+        accParts.push({ type: "text", content: msg.content });
+        accContent = accContent
+          ? accContent + "\n\n" + msg.content
+          : msg.content;
       }
 
       // 3. Tool calls → tool_call parts + matched tool_result parts
@@ -209,47 +245,49 @@ function convertHistoryToMessages(backendMessages: any[]): { messages: ChatMessa
           const fn = tc.function || {};
           const toolName = fn.name || "unknown";
           let args: Record<string, unknown> = {};
+          let description: string | undefined;
           try {
             args = JSON.parse(fn.arguments || "{}");
+            if (args.description && typeof args.description === "string") {
+              description = args.description;
+              delete args.description;
+            }
           } catch {
             // arguments might not be valid JSON
           }
 
-          parts.push({
+          accParts.push({
             type: "tool_call",
             toolName,
             args,
-            round: 0,
+            description,
+            round: accRound,
           });
 
           // Match tool result by tool_call_id
           const toolResult = toolResultMap.get(tc.id);
           if (toolResult) {
             let result = toolResult.content || "";
+            const isSearch = toolName.includes("search") || toolName.includes("web");
             // Truncate large results for display (consistent with SSE streaming)
-            if (result.length > 500) {
+            if (!isSearch && result.length > 500) {
               result = result.slice(0, 500) + `… (${result.length} chars)`;
             }
-            parts.push({
+            accParts.push({
               type: "tool_result",
               toolName,
               result,
-              round: 0,
+              round: accRound,
             });
           }
         }
+        accRound++;
       }
-
-      msgs.push({
-        id: `hist-${++counter}`,
-        role: "assistant",
-        content: msg.content || "",
-        reasoning: msg.reasoning_content || undefined,
-        parts: parts.length > 0 ? parts : undefined,
-      });
     }
     // role === "tool" consumed via toolResultMap — skip
   }
+
+  flushAssistant();
 
   return { messages: msgs, counter };
 }
@@ -299,6 +337,65 @@ function authHeaders(extra: Record<string, string> = {}): Record<string, string>
 
 const FILE_TOOL_NAMES = ["write_file", "edit_file", "create_file"];
 
+function summarizeTools(parts: MessagePart[]): string | null {
+  const toolCalls = parts.filter(p => p.type === "tool_call" && p.toolName !== "report_result");
+  if (toolCalls.length === 0) return null;
+  
+  const counts: Record<string, number> = { command: 0, file: 0, search: 0, other: 0 };
+  for (const tc of toolCalls) {
+     const n = (tc.toolName || "").toLowerCase();
+     if (n.includes("command") || n.includes("bash")) counts.command++;
+     else if (n.includes("file") || n.includes("read") || n.includes("edit")) counts.file++;
+     else if (n.includes("search") || n.includes("web") || n.includes("url")) counts.search++;
+     else counts.other++;
+  }
+  
+  const segments = [];
+  if (counts.command > 0) segments.push(`ran ${counts.command} command${counts.command > 1 ? 's' : ''}`);
+  if (counts.file > 0) segments.push(`accessed ${counts.file} file${counts.file > 1 ? 's' : ''}`);
+  if (counts.search > 0) segments.push(`made ${counts.search} search${counts.search > 1 ? 'es' : ''}`);
+  if (counts.other > 0) segments.push(`used ${counts.other} tool${counts.other > 1 ? 's' : ''}`);
+  
+  return segments.join(', ');
+}
+
+function summarizeToolNames(toolNames: string[]): string | null {
+  if (toolNames.length === 0) return null;
+  const counts: Record<string, number> = { command: 0, file: 0, search: 0, other: 0 };
+  for (const name of toolNames) {
+    const n = name.toLowerCase();
+    if (n.includes("command") || n.includes("bash")) counts.command++;
+    else if (n.includes("file") || n.includes("read") || n.includes("edit")) counts.file++;
+    else if (n.includes("search") || n.includes("web") || n.includes("url")) counts.search++;
+    else counts.other++;
+  }
+  const segments = [];
+  if (counts.command > 0) segments.push(`ran ${counts.command} command${counts.command > 1 ? 's' : ''}`);
+  if (counts.file > 0) segments.push(`accessed ${counts.file} file${counts.file > 1 ? 's' : ''}`);
+  if (counts.search > 0) segments.push(`made ${counts.search} search${counts.search > 1 ? 'es' : ''}`);
+  if (counts.other > 0) segments.push(`used ${counts.other} tool${counts.other > 1 ? 's' : ''}`);
+  return segments.join(', ');
+}
+
+function AgentStepGroup({ title, children, defaultOpen, isStreaming }: { title: string, children: React.ReactNode, defaultOpen: boolean, isStreaming?: boolean }) {
+  const anchorOnOpenChange = useScrollAnchor();
+  return (
+    <Collapsible defaultOpen={defaultOpen} className="group/step w-full" onOpenChange={anchorOnOpenChange}>
+      <CollapsibleTrigger className="flex w-full items-center gap-1 py-1.5 text-[13px] text-muted-foreground/80 hover:text-foreground transition-colors outline-none cursor-pointer">
+        <span className="text-left capitalize">
+          {isStreaming ? <Shimmer duration={1}>{title}</Shimmer> : title}
+        </span>
+        <ChevronDown className="size-3.5 text-muted-foreground/50 transition-transform group-data-[open]/step:rotate-180" />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="overflow-hidden data-[closed]:animate-collapsible-up data-[open]:animate-collapsible-down">
+        <div className="flex flex-col gap-1 pl-2">
+          {children}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function PartsRenderer({
   parts,
   isActive,
@@ -310,37 +407,47 @@ function PartsRenderer({
   isStreaming?: boolean;
   defaultCollapsed?: boolean;
 }) {
-  const items: React.ReactNode[] = [];
+  // First pass: build a flat list of typed items (reasoning, text, tool nodes)
+  type ItemNode = { kind: "reasoning" | "text" | "tool" | "search-tool"; node: React.ReactNode; round?: number; toolName?: string };
+  const flatItems: ItemNode[] = [];
   let i = 0;
 
   while (i < parts.length) {
     const part = parts[i];
 
     if (part.type === "reasoning") {
-      // Check if this reasoning block is the last part and still streaming
       const isLastPart = i === parts.length - 1;
       const isReasoningStreaming = isLastPart && isActive;
-      items.push(
-        <Reasoning
-          key={`reasoning-${i}`}
-          isStreaming={isReasoningStreaming}
-          className="w-full"
-          defaultOpen={isReasoningStreaming ? undefined : false}
-        >
-          <ReasoningTrigger />
-          <ReasoningContent>{part.content}</ReasoningContent>
-        </Reasoning>
-      );
+      flatItems.push({
+        kind: "reasoning",
+        node: (
+          <Reasoning
+            key={`reasoning-${i}`}
+            isStreaming={isReasoningStreaming}
+            className="w-full"
+            defaultOpen={isReasoningStreaming ? undefined : false}
+          >
+            <ReasoningTrigger />
+            <ReasoningContent>{part.content}</ReasoningContent>
+          </Reasoning>
+        ),
+      });
       i++;
       continue;
     }
 
     if (part.type === "text") {
-      items.push(
-        <MessageResponse key={`text-${i}`}>
-          {part.content}
-        </MessageResponse>
-      );
+      // Skip empty content — only non-empty text acts as a flush signal
+      if (part.content) {
+        flatItems.push({
+          kind: "text",
+          node: (
+            <MessageResponse key={`text-${i}`}>
+              {part.content}
+            </MessageResponse>
+          ),
+        });
+      }
       i++;
       continue;
     }
@@ -351,15 +458,14 @@ function PartsRenderer({
         nextPart?.type === "tool_result" &&
         nextPart.toolName === part.toolName;
 
-      // Skip report_result tool panel — its deliverables are rendered
-      // in the aggregated footer after all messages
+      // Skip report_result tool panel
       const toolName = part.toolName || "";
       if (toolName === "report_result" && hasResult) {
         i = i + 2;
         continue;
       }
 
-      // ── Normal tool panel rendering ──
+      // Determine tool state
       let toolState: "input-available" | "output-available" | "input-streaming";
       if (hasResult) {
         toolState = "output-available";
@@ -369,7 +475,7 @@ function PartsRenderer({
         toolState = "input-streaming";
       }
 
-      const shouldOpen = defaultCollapsed ? false : toolState === "output-available";
+      const shouldOpen = false; // Always closed by default, users can click to inspect args/output
 
       const delegateStopAction =
         part.toolName === "delegate" && !hasResult && isStreaming ? (
@@ -388,24 +494,59 @@ function PartsRenderer({
           </button>
         ) : undefined;
 
-      items.push(
-        <Tool key={`t-${i}`} defaultOpen={shouldOpen}>
-          <ToolHeader
-            title={part.toolName || "tool"}
-            type={`tool-${part.toolName || "unknown"}` as `tool-${string}`}
-            state={toolState}
-            actions={delegateStopAction}
-          />
-          <ToolContent>
-            {part.args && Object.keys(part.args).length > 0 && (
-              <ToolInput input={part.args} />
-            )}
-            {hasResult && nextPart && nextPart.type === "tool_result" && (
-              <ToolOutput output={nextPart.result} errorText={undefined} />
-            )}
-          </ToolContent>
-        </Tool>
-      );
+      let displayTitle = part.description || part.toolName || "tool";
+      if (!part.description && part.args) {
+        if (typeof part.args.query === "string") displayTitle = part.args.query;
+        else if (typeof part.args.command === "string") displayTitle = part.args.command;
+        else if (typeof part.args.path === "string") displayTitle = part.args.path;
+        else if (typeof part.args.url === "string") displayTitle = part.args.url;
+        else if (typeof part.args.file_path === "string") displayTitle = part.args.file_path;
+        else if (typeof part.args.target_folder === "string") displayTitle = part.args.target_folder;
+      }
+      if (displayTitle.length > 60) {
+        displayTitle = displayTitle.substring(0, 60) + '...';
+      }
+
+      const isSearchTool = toolName.includes("search") || toolName.includes("web") || toolName.includes("url");
+
+      if (isSearchTool) {
+        flatItems.push({
+          kind: "search-tool",
+          node: (
+            <SearchToolCall 
+              key={`t-${i}`} 
+              query={displayTitle} 
+              resultString={hasResult && nextPart && nextPart.type === "tool_result" ? nextPart.result : undefined} 
+            />
+          ),
+          round: part.round,
+          toolName: part.toolName,
+        });
+      } else {
+        flatItems.push({
+          kind: "tool",
+          node: (
+            <Tool key={`t-${i}`} defaultOpen={shouldOpen}>
+              <ToolHeader
+                title={displayTitle}
+                type={`tool-${part.toolName || "unknown"}` as `tool-${string}`}
+                state={toolState}
+                actions={delegateStopAction}
+              />
+              <ToolContent>
+                {part.args && Object.keys(part.args).length > 0 && (
+                  <ToolInput input={part.args} />
+                )}
+                {hasResult && nextPart && nextPart.type === "tool_result" && (
+                  <ToolOutput output={nextPart.result} errorText={undefined} />
+                )}
+              </ToolContent>
+            </Tool>
+          ),
+          round: part.round,
+          toolName: part.toolName,
+        });
+      }
 
       i = hasResult ? i + 2 : i + 1;
       continue;
@@ -415,7 +556,76 @@ function PartsRenderer({
     i++;
   }
 
-  return <>{items}</>;
+  // Second pass: Container state machine.
+  // Uses non-empty content as a flush signal to create alternating
+  // "Tool Container → Content → Tool Container" structure.
+  //
+  // States:
+  //   currentContainer === null  →  FLAT mode (reasoning/content rendered directly)
+  //   currentContainer !== null  →  COLLECTING mode (reasoning collected into container)
+  //
+  // Transitions:
+  //   reasoning  → container exists ? collect : render flat
+  //   text       → flush container (if any), render flat
+  //   tool       → container exists ? collect : create new container, collect
+
+  type ContainerItem = { kind: "tool" | "search-tool" | "reasoning"; node: React.ReactNode; toolName?: string };
+  const output: React.ReactNode[] = [];
+  let currentContainer: ContainerItem[] | null = null;
+  let groupIdx = 0;
+
+  const flushContainer = (isEndFlush = false) => {
+    if (!currentContainer || currentContainer.length === 0) {
+      currentContainer = null;
+      return;
+    }
+
+    const toolNames = currentContainer
+      .filter(ci => ci.kind === "tool" || ci.kind === "search-tool")
+      .map(ci => ci.toolName)
+      .filter(Boolean) as string[];
+
+    const summary = summarizeToolNames(toolNames) || "Used tools";
+    // Active container (end-flush during streaming) stays open; completed ones collapse
+    const containerStreaming = isEndFlush && !!(isActive || isStreaming);
+
+    output.push(
+      <AgentStepGroup key={`group-${groupIdx}`} title={summary} defaultOpen={containerStreaming} isStreaming={containerStreaming}>
+        {currentContainer.map(ci => ci.node)}
+      </AgentStepGroup>
+    );
+    groupIdx++;
+    currentContainer = null;
+  };
+
+  for (let j = 0; j < flatItems.length; j++) {
+    const item = flatItems[j];
+
+    if (item.kind === "reasoning") {
+      if (currentContainer !== null) {
+        // COLLECTING mode → reasoning goes into container
+        currentContainer.push({ kind: "reasoning", node: item.node });
+      } else {
+        // FLAT mode → render reasoning directly
+        output.push(item.node);
+      }
+    } else if (item.kind === "text") {
+      // Content (non-empty) → flush container if exists, then render flat
+      flushContainer();
+      output.push(item.node);
+    } else if (item.kind === "tool" || item.kind === "search-tool") {
+      // Tool → add to container (create lazily if needed)
+      if (currentContainer === null) {
+        currentContainer = [];
+      }
+      currentContainer.push({ kind: item.kind, node: item.node, toolName: item.toolName });
+    }
+  }
+
+  // Loop end → flush remaining container (active during streaming)
+  flushContainer(true);
+
+  return <>{output}</>;
 }
 
 // ── App ──
@@ -961,6 +1171,7 @@ function App() {
                   toolName: data.tool_name,
                   args: data.args,
                   result: data.result,
+                  description: data.description,
                 });
                 setThinkingMsgId(assistantId);
                 updateMsg({ parts: [...currentParts] });

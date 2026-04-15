@@ -45,6 +45,7 @@ website/
 
 # excalidraw
 *.excalidraw
+*.pen
 
 .claude
 *.png
