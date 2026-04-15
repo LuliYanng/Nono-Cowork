@@ -196,14 +196,28 @@ async function initializeSyncthingRuntime() {
   const homePath = getManagedSyncthingHomePath();
   fs.mkdirSync(homePath, { recursive: true });
 
+  // Pre-seed a minimal config.xml on first run so Syncthing does NOT
+  // auto-create a "Default Folder" (which uses path="~" and causes
+  // ghost folder issues on Windows where ~ becomes a literal directory).
+  const seedConfigPath = path.join(homePath, 'config.xml');
+  if (!fs.existsSync(seedConfigPath)) {
+    const minimalConfig = `<configuration version="35">
+    <gui enabled="true" tls="false" debugging="false">
+        <address>127.0.0.1:${MANAGED_SYNCTHING_PORT}</address>
+    </gui>
+</configuration>`;
+    fs.writeFileSync(seedConfigPath, minimalConfig, 'utf8');
+    console.info('[Syncthing] Pre-seeded empty config (no default folder)');
+  }
+
   managedSyncthingProcess = spawn(
     exePath,
     [
       'serve',
       '--home', homePath,
       '--no-browser',
-      // Keep a fixed localhost GUI port for desktop IPC calls.
-      // (Syncthing v2 removed the old --no-default-folder flag.)
+      // Prevent auto-creation of default folder (v1 flag, harmless on v2)
+      '--no-default-folder',
       '--gui-address', `127.0.0.1:${MANAGED_SYNCTHING_PORT}`,
     ],
     {
@@ -270,11 +284,13 @@ async function getLocalSyncthingStatus() {
 
   return {
     deviceId: systemStatus.myID || '',
-    folders: (Array.isArray(folders) ? folders : []).map((f) => ({
-      id: f.id,
-      label: f.label || f.id,
-      path: f.path,
-    })),
+    folders: (Array.isArray(folders) ? folders : [])
+      .filter((f) => f.id)  // Skip ghost folders with empty IDs
+      .map((f) => ({
+        id: f.id,
+        label: f.label || f.id,
+        path: path.resolve(f.path),  // Resolve ~ or relative paths to absolute
+      })),
   };
 }
 

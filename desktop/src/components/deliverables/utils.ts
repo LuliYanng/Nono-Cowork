@@ -71,8 +71,8 @@ class SyncPathResolver {
 
     // 3. Match by folder ID to build mappings
     for (const remote of remoteFolders) {
-      // Skip folders with empty IDs (config artifacts) or unexpanded ~ paths
-      // (the backend should expand ~, but guard against it here too)
+      // Defense-in-depth: skip folders with empty IDs or unexpanded ~ paths.
+      // The backend and Electron now normalize at the source, but guard here too.
       if (!remote.id || remote.path === "~" || remote.path.startsWith("~/")) {
         console.warn(`[SyncPaths] Skipping remote folder with unexpanded path: ${remote.path}`);
         continue;

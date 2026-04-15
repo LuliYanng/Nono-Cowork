@@ -62,8 +62,7 @@ class SyncthingClient:
         if file_path:
             abs_path = os.path.abspath(file_path)
             for f in self._folder_cache:
-                folder_path = os.path.abspath(os.path.expanduser(f["path"]))
-                if abs_path.startswith(folder_path):
+                if abs_path.startswith(os.path.abspath(f["path"])):
                     return f["id"]
 
         # Try to match by workspace env var
@@ -71,7 +70,7 @@ class SyncthingClient:
         if workspace:
             workspace = os.path.abspath(os.path.expanduser(workspace))
             for f in self._folder_cache:
-                if os.path.abspath(os.path.expanduser(f["path"])) == workspace:
+                if os.path.abspath(f["path"]) == workspace:
                     return f["id"]
 
         # Fall back to first folder
@@ -118,7 +117,20 @@ class SyncthingClient:
         return self._get("/rest/system/connections")
 
     def get_folders(self):
-        return self._get("/rest/config/folders")
+        """Get folder list with path normalization and validation.
+
+        Normalizes all folder paths (expands ~, resolves to absolute) and
+        filters out folders with empty IDs.  This is the single source of
+        truth — downstream consumers should NOT re-normalize.
+        """
+        raw = self._get("/rest/config/folders")
+        cleaned = []
+        for f in raw:
+            if not f.get("id"):
+                continue  # Skip ghost folders with empty IDs
+            f["path"] = os.path.abspath(os.path.expanduser(f["path"]))
+            cleaned.append(f)
+        return cleaned
 
     def get_folder_status(self, folder_id):
         return self._get("/rest/db/status", folder=folder_id)

@@ -892,19 +892,15 @@ async def get_sync_config():
     try:
         from tools.syncthing import SyncthingClient
         st = SyncthingClient()
-        folders = st.get_folders()
+        folders = st.get_folders()  # Already normalized and filtered
         return {
             "folders": [
                 {
                     "id": f["id"],
                     "label": f.get("label", f["id"]),
-                    # Expand ~ to absolute path — Syncthing config may store
-                    # paths with unexpanded ~ which breaks frontend path mapping.
-                    "path": os.path.expanduser(f["path"]),
+                    "path": f["path"],
                 }
                 for f in folders
-                # Filter out folders with empty IDs (config artifacts)
-                if f.get("id")
             ]
         }
     except Exception:
@@ -957,25 +953,13 @@ async def sync_pair(request: Request):
             })
             logger.info("Paired new desktop device: %s (%s)", desktop_name, desktop_device_id[:12])
 
-        # 4. Ensure all shared folders include the desktop device
-        folders = st.get_folders()
-        folder_info = []
-        for f in folders:
-            folder_info.append({
-                "id": f["id"],
-                "label": f.get("label", f["id"]),
-                "path": f["path"],
-            })
-            device_ids = {d["deviceID"] for d in f.get("devices", [])}
-            if desktop_device_id not in device_ids:
-                devices = list(f.get("devices", []))
-                devices.append({"deviceID": desktop_device_id})
-                st._patch(f"/rest/config/folders/{f['id']}", {"devices": devices})
-                logger.info("Added desktop device to folder: %s", f["id"])
+        # NOTE: We intentionally do NOT share any folders here.
+        # Folder sharing is user-initiated via the SyncFolderWidget
+        # (POST /api/sync/folders).  Automatically sharing all VPS
+        # folders caused ghost-folder propagation and broken paths.
 
         return {
             "vps_device_id": vps_device_id,
-            "folders": folder_info,
             "paired": True,
         }
     except Exception as e:

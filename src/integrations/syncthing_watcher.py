@@ -195,9 +195,7 @@ class SyncthingEventWatcher:
         self._folder_paths: dict[str, str] = {}
         try:
             for f in self._st.get_folders():
-                self._folder_paths[f["id"]] = os.path.abspath(
-                    os.path.expanduser(f["path"])
-                )
+                self._folder_paths[f["id"]] = os.path.abspath(f["path"])
         except Exception as e:
             logger.warning("Failed to load folder paths: %s", e)
 

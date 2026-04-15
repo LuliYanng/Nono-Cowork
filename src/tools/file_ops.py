@@ -155,7 +155,7 @@ def _get_workspace():
         st = SyncthingClient()
         folders = st.get_folders()
         if folders:
-            return os.path.expanduser(folders[0]["path"])
+            return folders[0]["path"]
     except Exception:
         pass
     return os.path.expanduser("~/")
