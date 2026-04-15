@@ -53,3 +53,4 @@ website/
 # embedded syncthing runtime (generated)
 desktop/electron/vendor/syncthing/windows-amd64/syncthing.exe
 desktop/electron/vendor/syncthing/windows-amd64/LICENSE
+syncthing_audit.md
