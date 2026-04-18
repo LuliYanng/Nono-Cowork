@@ -169,9 +169,14 @@ class FileDropEngine:
     def on_sync_event(self, event):
         """Callback registered with SyncEventBuffer.register_listener().
 
-        Called for every RemoteChangeDetected event. Matches against rules
-        and schedules execution with debounce.
+        Called for every change event. Matches against rules and schedules
+        execution with debounce.
         """
+        # Only fire on files the USER dropped in. Outbound events (the Agent's
+        # own writes) would otherwise create a self-trigger loop.
+        if getattr(event, "direction", "inbound") != "inbound":
+            return
+
         # Quick filter: only process file events (not directories)
         if event.file_type != "file":
             return

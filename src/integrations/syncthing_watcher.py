@@ -43,7 +43,7 @@ _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
 @dataclass
 class SyncEvent:
-    """A single file change event from a remote Syncthing device."""
+    """A single file change event observed by the Syncthing event watcher."""
     timestamp: float        # unix timestamp
     action: str             # "added" | "modified" | "deleted"
     path: str               # relative path within sync folder, e.g. "inbox/report.pdf"
@@ -51,8 +51,14 @@ class SyncEvent:
     file_type: str          # "file" | "dir"
     folder_id: str          # Syncthing folder ID
     size: int | None = None        # bytes, None if file not yet downloaded
-    synced: bool = False           # True if file exists locally (downloaded)
+    synced: bool = False           # True if file has finished transferring
     is_conflict: bool = False      # True if this is a sync-conflict file
+    # Direction of transfer relative to the VPS:
+    #   "inbound"  = user's device → VPS (RemoteChangeDetected)
+    #   "outbound" = VPS → user's device (LocalChangeDetected, i.e. Agent wrote it)
+    direction: str = "inbound"
+    # Per-file transfer progress 0..100; None if not actively transferring.
+    progress: int | None = None
 
 
 # ═══════════════════════════════════════════
@@ -83,6 +89,22 @@ class SyncEventBuffer:
                 listener(event)
             except Exception as e:
                 logger.debug("Listener error: %s", e)
+
+    def patch_latest(self, folder_id: str, path: str, **fields) -> SyncEvent | None:
+        """Mutate the most recent event matching (folder_id, path) and return it.
+
+        Used by transfer-phase events (ItemStarted/ItemFinished/DownloadProgress)
+        to update progress/synced state on an already-buffered change event.
+        Returns None if no matching event was found.
+        """
+        with self._lock:
+            # Walk newest → oldest so the most recent event wins.
+            for e in reversed(self._events):
+                if e.folder_id == folder_id and e.path == path:
+                    for k, v in fields.items():
+                        setattr(e, k, v)
+                    return e
+        return None
 
     def get_recent(self, minutes: int = 30, limit: int = 20) -> list[SyncEvent]:
         """Get recent events, deduplicated by path (latest wins), newest first.
@@ -189,7 +211,10 @@ class SyncthingEventWatcher:
         self._running = False
         self._thread: threading.Thread | None = None
         self._last_seen_id = 0
-        self._state_file = os.path.join(_DATA_DIR, "sync_watcher_state.json")
+        # v2: we subscribe to the general /rest/events stream (not /rest/events/disk),
+        # which has a different ID sequence. A new state-file name forces a clean
+        # restart on upgrade instead of trying to resume from a stale disk-stream ID.
+        self._state_file = os.path.join(_DATA_DIR, "sync_watcher_state_v2.json")
 
         # Build folder path lookup: folder_id → absolute path
         self._folder_paths: dict[str, str] = {}
@@ -247,15 +272,30 @@ class SyncthingEventWatcher:
 
     # ── Main polling loop ──
 
+    # Subset of the general event stream we care about. RemoteChangeDetected
+    # and LocalChangeDetected tell us WHAT changed; the Item*/DownloadProgress
+    # events tell us how the transfer of that change is progressing.
+    _SUBSCRIBED_EVENTS = (
+        "RemoteChangeDetected,"
+        "LocalChangeDetected,"
+        "ItemStarted,"
+        "ItemFinished,"
+        "DownloadProgress"
+    )
+
     def _event_loop(self):
-        """Long-poll /rest/events/disk with auto-reconnect."""
+        """Long-poll /rest/events with auto-reconnect."""
         while self._running:
             try:
                 # Long-poll: blocks up to 60s waiting for events
                 r = requests.get(
-                    f"{self._st.url}/rest/events/disk",
+                    f"{self._st.url}/rest/events",
                     headers=self._st.headers,
-                    params={"since": self._last_seen_id, "timeout": 60},
+                    params={
+                        "since": self._last_seen_id,
+                        "timeout": 60,
+                        "events": self._SUBSCRIBED_EVENTS,
+                    },
                     timeout=70,  # HTTP timeout slightly > Syncthing's poll timeout
                 )
                 r.raise_for_status()
@@ -263,8 +303,17 @@ class SyncthingEventWatcher:
 
                 for event in events:
                     self._last_seen_id = event.get("id", self._last_seen_id)
-                    if event.get("type") == "RemoteChangeDetected":
-                        self._process_event(event)
+                    etype = event.get("type")
+                    if etype == "RemoteChangeDetected":
+                        self._process_change_event(event, direction="inbound")
+                    elif etype == "LocalChangeDetected":
+                        self._process_change_event(event, direction="outbound")
+                    elif etype == "ItemStarted":
+                        self._process_item_started(event)
+                    elif etype == "ItemFinished":
+                        self._process_item_finished(event)
+                    elif etype == "DownloadProgress":
+                        self._process_download_progress(event)
 
                 # Persist state periodically (after each batch)
                 if events:
@@ -284,8 +333,13 @@ class SyncthingEventWatcher:
                 logger.error("Event watcher error: %s", e)
                 time.sleep(5)
 
-    def _process_event(self, event: dict):
-        """Process a single RemoteChangeDetected event."""
+    def _process_change_event(self, event: dict, direction: str):
+        """Handle a RemoteChangeDetected or LocalChangeDetected event.
+
+        These announce that a file has changed on some peer; the actual
+        byte-level transfer progress arrives later via ItemStarted/Finished
+        and DownloadProgress events (inbound only).
+        """
         data = event.get("data", {})
         path = data.get("path", "")
         action = data.get("action", "unknown")
@@ -306,15 +360,19 @@ class SyncthingEventWatcher:
         # Check if this is a sync-conflict file
         is_conflict = ".sync-conflict-" in os.path.basename(path)
 
-        # Determine sync status and file size
+        # For inbound, "synced" means the file landed on our disk. For outbound,
+        # the file was just written locally so it exists; "synced" from the user's
+        # perspective means the remote device received it, which we only learn
+        # later (currently approximated by ItemFinished on the outbound path).
         synced = False
         size = None
         if action != "deleted" and abs_path and os.path.exists(abs_path):
-            synced = True
             try:
                 size = os.path.getsize(abs_path)
             except OSError:
                 pass
+            if direction == "inbound":
+                synced = True
 
         # Use Syncthing's actual event timestamp (not time.time()!)
         # This prevents stale events from Syncthing's buffer appearing as 'just now'
@@ -336,21 +394,90 @@ class SyncthingEventWatcher:
             size=size,
             synced=synced,
             is_conflict=is_conflict,
+            direction=direction,
+            progress=(100 if synced else None),
         )
 
         self._buffer.add(sync_event)
-        logger.info("Sync event: %s %s [%s] (%s)",
-                    action, path, file_type,
+        logger.info("Sync event: %s %s %s [%s] (%s)",
+                    direction, action, path, file_type,
                     "synced" if synced else "pending")
+
+    def _process_item_started(self, event: dict):
+        """ItemStarted: Syncthing has begun transferring a single item.
+
+        We mark the corresponding buffered change event as actively transferring
+        (progress=0) so the UI can switch it from 'pending' to 'syncing'.
+        """
+        data = event.get("data", {})
+        path = data.get("item", "")
+        folder_id = data.get("folder", "")
+        if not path or _should_ignore(path):
+            return
+        self._buffer.patch_latest(folder_id, path, progress=0, synced=False)
+
+    def _process_item_finished(self, event: dict):
+        """ItemFinished: a single item's transfer has completed (or failed)."""
+        data = event.get("data", {})
+        path = data.get("item", "")
+        folder_id = data.get("folder", "")
+        err = data.get("error")
+        if not path or _should_ignore(path):
+            return
+
+        if err:
+            # Transfer failed — leave progress None as a signal, note in buffer.
+            self._buffer.patch_latest(folder_id, path, synced=False, progress=None)
+            logger.warning("Sync transfer failed: %s %s: %s", folder_id, path, err)
+            return
+
+        # Success. Refresh size from disk (inbound only — outbound file was
+        # already sized at change-event time).
+        folder_root = self._folder_paths.get(folder_id, "")
+        abs_path = os.path.join(folder_root, path) if folder_root else path
+        size = None
+        if abs_path and os.path.exists(abs_path):
+            try:
+                size = os.path.getsize(abs_path)
+            except OSError:
+                pass
+        patch = {"progress": 100, "synced": True}
+        if size is not None:
+            patch["size"] = size
+        self._buffer.patch_latest(folder_id, path, **patch)
+
+    def _process_download_progress(self, event: dict):
+        """DownloadProgress: per-folder, per-file progress by bytes/blocks.
+
+        Event shape: {"data": {folder_id: {path: {total, pulling, copiedFromOrigin,
+        copiedFromElsewhere, reused, bytesTotal, bytesDone}}}}
+        """
+        for folder_id, files in (event.get("data") or {}).items():
+            if not isinstance(files, dict):
+                continue
+            for path, info in files.items():
+                if not path or _should_ignore(path):
+                    continue
+                total = info.get("bytesTotal", 0) or info.get("total", 0)
+                done = info.get("bytesDone", 0)
+                if total <= 0:
+                    continue
+                pct = max(0, min(99, int(done * 100 / total)))
+                self._buffer.patch_latest(folder_id, path, progress=pct)
 
     # ── Context generation ──
 
     def get_sync_context(self) -> str:
         """Generate the <file_sync_activity> context block for injection.
 
+        Only inbound events (user → VPS) are surfaced — the Agent already
+        knows what it wrote itself, and including outbound events would
+        create noisy self-reference.
+
         Returns empty string if no recent events — zero overhead in that case.
         """
-        recent = self._buffer.get_recent(minutes=30, limit=20)
+        all_recent = self._buffer.get_recent(minutes=30, limit=40)
+        recent = [e for e in all_recent if e.direction == "inbound"][:20]
         if not recent:
             return ""
 

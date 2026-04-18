@@ -1177,8 +1177,9 @@ async def get_sync_status():
 async def list_sync_events(minutes: int = 30, limit: int = 20):
     """List recent file-level sync events from the Syncthing event buffer.
 
-    These are per-file events (added/modified/deleted) detected from the
-    user's remote device, tracked by the SyncthingEventWatcher daemon.
+    These are per-file events (added/modified/deleted) tracked by the
+    SyncthingEventWatcher daemon. Includes both inbound (user → VPS) and
+    outbound (VPS → user) directions.
 
     Query params:
         minutes: Time window in minutes (default: 30)
@@ -1189,8 +1190,9 @@ async def list_sync_events(minutes: int = 30, limit: int = 20):
             path: str,           # Relative path within sync folder
             abs_path: str,       # Absolute path on VPS
             action: str,         # "added" | "modified" | "deleted"
+            direction: str,      # "inbound" | "outbound"
             state: str,          # "syncing" | "done" | "error"
-            progress: int|null,  # 0-100 if syncing, null otherwise
+            progress: int|null,  # 0-100 if syncing with known progress, null otherwise
             time_ago: str,       # Human-readable time ("Just now", "2 min ago")
             timestamp: float,    # Unix timestamp
             folder_id: str,      # Syncthing folder ID
@@ -1209,23 +1211,25 @@ async def list_sync_events(minutes: int = 30, limit: int = 20):
     events = []
     syncing_count = 0
     for e in recent:
-        # Determine current file state
-        import os as _os
+        # Derive state from the progress/synced fields maintained by the watcher.
+        # The watcher updates these in response to ItemStarted/ItemFinished/
+        # DownloadProgress events — no more hardcoded 50%.
         if e.action == "deleted":
             state = "done"
             progress = None
-        elif e.abs_path and _os.path.exists(e.abs_path):
+        elif e.synced or e.progress == 100:
             state = "done"
             progress = None
         else:
             state = "syncing"
-            progress = 50  # Approximate — Syncthing doesn't give per-file %
+            progress = e.progress  # may be None when transfer hasn't reported yet
             syncing_count += 1
 
         events.append({
             "path": e.path,
             "abs_path": e.abs_path,
             "action": e.action,
+            "direction": e.direction,
             "state": state,
             "progress": progress,
             "time_ago": _format_time_ago(e.timestamp),

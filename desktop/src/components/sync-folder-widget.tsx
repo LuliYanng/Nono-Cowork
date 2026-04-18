@@ -9,6 +9,9 @@ import {
   RefreshCw,
   ChevronRight,
   Settings2,
+  Trash2,
+  ArrowUpFromLine,
+  ArrowDownToLine,
 } from "lucide-react";
 
 // ── Status badge folder icon (matches pencil prototype: folder-icons-set) ──
@@ -69,6 +72,7 @@ interface SyncFileEvent {
   path: string;
   abs_path: string;
   action: "added" | "modified" | "deleted";
+  direction: "inbound" | "outbound";
   state: "syncing" | "done" | "error";
   progress: number | null;
   time_ago: string;
@@ -81,6 +85,88 @@ interface SyncFolderWidgetProps {
   getHeaders: () => Record<string, string>;
   syncState: "connected" | "syncing" | "disconnected" | "loading";
   vpsDeviceId: string;
+}
+
+// ── Event group subcomponent ──
+
+interface EventGroupProps {
+  label: string;
+  Icon: typeof ArrowDownToLine;
+  events: SyncFileEvent[];
+}
+
+function EventGroup({ label, Icon, events }: EventGroupProps) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <Icon size={10} style={{ color: "#A8A6A4" }} />
+        <span style={{ fontSize: 10, fontWeight: 600, color: "#A8A6A4", fontFamily: "Inter, sans-serif", letterSpacing: 0.2 }}>
+          {label.toUpperCase()}
+        </span>
+      </div>
+      {events.map((evt, i) => {
+        // Progress may be null even when syncing (transfer not yet reported);
+        // render an em-dash in that case instead of a bogus percentage.
+        const progressLabel =
+          evt.state === "syncing"
+            ? (evt.progress != null ? `${evt.progress}%` : "…")
+            : evt.state === "done"
+            ? (evt.time_ago || "Done")
+            : "Fail";
+        return (
+          <div
+            key={`${evt.path}-${i}`}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              width: "100%",
+              gap: 8,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0, flex: 1 }}>
+              {evt.state === "syncing" && (
+                <RefreshCw size={12} className="animate-spin" style={{ color: "#0B57D0", flexShrink: 0 }} />
+              )}
+              {evt.state === "done" && (
+                <Check size={12} style={{ color: "#15A362", flexShrink: 0 }} />
+              )}
+              {evt.state === "error" && (
+                <X size={12} style={{ color: "#D14343", flexShrink: 0 }} />
+              )}
+              <span
+                title={evt.path}
+                style={{
+                  fontSize: 12,
+                  color: evt.state === "done" || evt.state === "error" ? "#8A8886" : "#333333",
+                  fontFamily: "Inter, sans-serif",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {evt.path}
+              </span>
+            </div>
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: evt.state === "syncing" || evt.state === "error" ? 600 : "normal",
+                color: evt.state === "syncing" ? "#0B57D0"
+                  : evt.state === "error" ? "#D14343"
+                  : "#A8A6A4",
+                fontFamily: "Inter, sans-serif",
+                flexShrink: 0,
+                textAlign: "right",
+              }}
+            >
+              {progressLabel}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 // ── Component ──
@@ -250,6 +336,28 @@ export function SyncFolderWidget({
     }
   }, [apiBase, getHeaders, vpsDeviceId, isAdding, fetchFolderStatus]);
 
+  // ── Remove folder flow ──
+  const handleRemoveFolder = useCallback(async (folderId: string) => {
+    const electron = window.electronAPI;
+    if (!electron?.syncthingRemoveFolder) return;
+
+    // Optimistic UI removal
+    setFolders((prev) => prev.filter((f) => f.id !== folderId));
+
+    try {
+      // Remove from local desktop Syncthing
+      await electron.syncthingRemoveFolder({ folderId });
+      // Mirror the removal on the VPS side so it doesn't keep re-announcing
+      await fetch(`${apiBase}/api/sync/folders/${folderId}`, {
+        method: "DELETE",
+        headers: getHeaders(),
+      });
+    } catch {
+      // On failure, refresh from server to resync UI state
+      fetchFolderStatus();
+    }
+  }, [apiBase, getHeaders, fetchFolderStatus]);
+
   const isDisconnected = syncState === "disconnected" || syncState === "loading";
   const hasElectron = !!window.electronAPI?.dialogSelectFolder;
 
@@ -273,9 +381,11 @@ export function SyncFolderWidget({
     return "idle";
   })();
 
-  // Get display events (max 4 for the popup, matching prototype)
-  const displayEvents = syncEvents.slice(0, 4);
-  const hasEvents = displayEvents.length > 0;
+  // Split events by direction. "From you" = user → VPS, "To you" = VPS → user.
+  // Cap each group at 3 so the panel stays compact.
+  const inboundEvents = syncEvents.filter((e) => e.direction === "inbound").slice(0, 3);
+  const outboundEvents = syncEvents.filter((e) => e.direction === "outbound").slice(0, 3);
+  const hasEvents = inboundEvents.length > 0 || outboundEvents.length > 0;
 
   return (
     <>
@@ -307,39 +417,106 @@ export function SyncFolderWidget({
               </div>
 
               {/* Folder items */}
-              {folders.map((f) => (
-                <button
-                  type="button"
-                  key={f.id}
-                  className="w-full text-left transition-colors hover:bg-[#F7F6F5]"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "6px 8px",
-                    borderRadius: 6,
-                    border: "none",
-                    background: "transparent",
-                    cursor: "pointer",
-                  }}
-                  onClick={() => setShowPanel(false)}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <Folder size={16} style={{ color: "#333333", flexShrink: 0 }} />
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <span style={{ fontSize: 13, color: "#333333", fontFamily: "Inter, sans-serif" }}>
-                        {f.localPath}
-                      </span>
-                      <span style={{ fontSize: 11, color: "#8A8886", fontFamily: "Inter, sans-serif" }}>
-                        {f.localPath}
-                      </span>
+              {folders.map((f) => {
+                const barColor = f.state === "error" ? "#D14343"
+                  : f.state === "idle" ? "#15A362"
+                  : "#0B57D0";
+                const barPct = Math.max(0, Math.min(100, f.completion ?? 0));
+                return (
+                  <div
+                    key={f.id}
+                    className="group transition-colors hover:bg-[#F7F6F5]"
+                    style={{
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: 1 }}>
+                        <Folder size={16} style={{ color: "#333333", flexShrink: 0 }} />
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                          <span
+                            style={{
+                              fontSize: 13,
+                              color: "#333333",
+                              fontFamily: "Inter, sans-serif",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {f.label}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: "#8A8886",
+                              fontFamily: "Inter, sans-serif",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {f.localPath}
+                          </span>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                        {f.state !== "idle" && (
+                          <span style={{ fontSize: 11, color: "#8A8886", fontFamily: "Inter, sans-serif", minWidth: 32, textAlign: "right" }}>
+                            {Math.round(barPct)}%
+                          </span>
+                        )}
+                        {f.id === selectedFolder?.id && (
+                          <Check size={14} style={{ color: "#0B57D0", flexShrink: 0 }} />
+                        )}
+                        <button
+                          type="button"
+                          aria-label="Remove synced folder"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRemoveFolder(f.id);
+                          }}
+                          className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            padding: 2,
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                          }}
+                        >
+                          <Trash2 size={14} style={{ color: "#8A8886" }} />
+                        </button>
+                      </div>
                     </div>
+                    {/* Per-folder progress bar — only shown while not idle */}
+                    {f.state !== "idle" && (
+                      <div style={{ height: 2, borderRadius: 1, background: "#F0EEEC", overflow: "hidden" }}>
+                        <div
+                          style={{
+                            height: "100%",
+                            width: `${barPct}%`,
+                            background: barColor,
+                            transition: "width 0.3s ease",
+                          }}
+                        />
+                      </div>
+                    )}
                   </div>
-                  {f.id === selectedFolder?.id && (
-                    <Check size={16} style={{ color: "#0B57D0", flexShrink: 0 }} />
-                  )}
-                </button>
-              ))}
+                );
+              })}
 
               {/* No folders yet */}
               {folders.length === 0 && (
@@ -393,60 +570,24 @@ export function SyncFolderWidget({
             {/* Divider */}
             <div style={{ height: 1, width: "100%", background: "#F7F6F5" }} />
 
-            {/* File sync rows — real data from /api/sync/events */}
+            {/* File sync rows — split into inbound ("From you") and outbound ("To you") */}
             {hasEvents ? (
-              displayEvents.map((evt, i) => (
-                <div
-                  key={`${evt.path}-${i}`}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    width: "100%",
-                    gap: 8,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0, flex: 1 }}>
-                    {evt.state === "syncing" && (
-                      <RefreshCw size={12} className="animate-spin" style={{ color: "#0B57D0", flexShrink: 0 }} />
-                    )}
-                    {evt.state === "done" && (
-                      <Check size={12} style={{ color: "#15A362", flexShrink: 0 }} />
-                    )}
-                    {evt.state === "error" && (
-                      <X size={12} style={{ color: "#D14343", flexShrink: 0 }} />
-                    )}
-                    <span
-                      style={{
-                        fontSize: 12,
-                        color: evt.state === "done" || evt.state === "error" ? "#8A8886" : "#333333",
-                        fontFamily: "Inter, sans-serif",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {evt.path}
-                    </span>
-                  </div>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: evt.state === "syncing" || evt.state === "error" ? 600 : "normal",
-                      color: evt.state === "syncing" ? "#0B57D0"
-                        : evt.state === "error" ? "#D14343"
-                        : "#A8A6A4",
-                      fontFamily: "Inter, sans-serif",
-                      flexShrink: 0,
-                      textAlign: "right",
-                    }}
-                  >
-                    {evt.state === "syncing" && `${evt.progress ?? 50}%`}
-                    {evt.state === "done" && (evt.time_ago || "Done")}
-                    {evt.state === "error" && "Fail"}
-                  </span>
-                </div>
-              ))
+              <>
+                {inboundEvents.length > 0 && (
+                  <EventGroup
+                    label="From you"
+                    Icon={ArrowDownToLine}
+                    events={inboundEvents}
+                  />
+                )}
+                {outboundEvents.length > 0 && (
+                  <EventGroup
+                    label="To you"
+                    Icon={ArrowUpFromLine}
+                    events={outboundEvents}
+                  />
+                )}
+              </>
             ) : (
               <div style={{ padding: "4px 0" }}>
                 <span style={{ fontSize: 12, color: "#A8A6A4", fontFamily: "Inter, sans-serif" }}>
@@ -509,9 +650,27 @@ export function SyncFolderWidget({
           <Folder size={16} style={{ color: "#A8A6A4" }} />
         )}
         {selectedFolder ? (
-          <span style={{ fontSize: 12, fontWeight: 600, color: "#5A5856", fontFamily: "Inter, sans-serif" }}>
-            {displayPath}
-          </span>
+          <>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "#5A5856", fontFamily: "Inter, sans-serif" }}>
+              {displayPath}
+            </span>
+            {totalSyncing > 0 && (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "#FFFFFF",
+                  background: "#0B57D0",
+                  padding: "1px 6px",
+                  borderRadius: 10,
+                  fontFamily: "Inter, sans-serif",
+                  lineHeight: 1.4,
+                }}
+              >
+                {totalSyncing}
+              </span>
+            )}
+          </>
         ) : (
           <span style={{ fontSize: 12, fontWeight: 600, color: "#5A5856", fontFamily: "Inter, sans-serif" }}>
             Sync folder
