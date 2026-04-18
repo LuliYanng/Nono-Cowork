@@ -87,84 +87,75 @@ interface SyncFolderWidgetProps {
   vpsDeviceId: string;
 }
 
-// ── Event group subcomponent ──
+// ── File sync row ──
+// A single compact row: direction arrow + filename + progress/time.
+// Chronological mixed list (no grouping); the ↑/↓ arrow differentiates direction.
 
-interface EventGroupProps {
-  label: string;
-  Icon: typeof ArrowDownToLine;
-  events: SyncFileEvent[];
-}
+function FileSyncRow({ evt }: { evt: SyncFileEvent }) {
+  // Direction arrow:
+  //   inbound  = "from you" (user → VPS)   → ↑ (sending up)
+  //   outbound = "to you"   (VPS → user)   → ↓ (receiving down)
+  const DirectionIcon = evt.direction === "inbound" ? ArrowUpFromLine : ArrowDownToLine;
+  const directionColor = evt.direction === "inbound" ? "#A8A6A4" : "#A8A6A4";
 
-function EventGroup({ label, Icon, events }: EventGroupProps) {
+  // Progress may be null even when syncing (transfer not yet reported);
+  // render ellipsis in that case instead of a bogus percentage.
+  const progressLabel =
+    evt.state === "syncing"
+      ? (evt.progress != null ? `${evt.progress}%` : "…")
+      : evt.state === "done"
+      ? (evt.time_ago || "Done")
+      : "Fail";
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <Icon size={10} style={{ color: "#A8A6A4" }} />
-        <span style={{ fontSize: 10, fontWeight: 600, color: "#A8A6A4", fontFamily: "Inter, sans-serif", letterSpacing: 0.2 }}>
-          {label.toUpperCase()}
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        width: "100%",
+        gap: 8,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
+        <DirectionIcon size={11} style={{ color: directionColor, flexShrink: 0 }} />
+        {evt.state === "syncing" && (
+          <RefreshCw size={11} className="animate-spin" style={{ color: "#0B57D0", flexShrink: 0 }} />
+        )}
+        {evt.state === "done" && (
+          <Check size={11} style={{ color: "#15A362", flexShrink: 0 }} />
+        )}
+        {evt.state === "error" && (
+          <X size={11} style={{ color: "#D14343", flexShrink: 0 }} />
+        )}
+        <span
+          title={evt.path}
+          style={{
+            fontSize: 12,
+            color: evt.state === "done" || evt.state === "error" ? "#8A8886" : "#333333",
+            fontFamily: "Inter, sans-serif",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {evt.path}
         </span>
       </div>
-      {events.map((evt, i) => {
-        // Progress may be null even when syncing (transfer not yet reported);
-        // render an em-dash in that case instead of a bogus percentage.
-        const progressLabel =
-          evt.state === "syncing"
-            ? (evt.progress != null ? `${evt.progress}%` : "…")
-            : evt.state === "done"
-            ? (evt.time_ago || "Done")
-            : "Fail";
-        return (
-          <div
-            key={`${evt.path}-${i}`}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              width: "100%",
-              gap: 8,
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0, flex: 1 }}>
-              {evt.state === "syncing" && (
-                <RefreshCw size={12} className="animate-spin" style={{ color: "#0B57D0", flexShrink: 0 }} />
-              )}
-              {evt.state === "done" && (
-                <Check size={12} style={{ color: "#15A362", flexShrink: 0 }} />
-              )}
-              {evt.state === "error" && (
-                <X size={12} style={{ color: "#D14343", flexShrink: 0 }} />
-              )}
-              <span
-                title={evt.path}
-                style={{
-                  fontSize: 12,
-                  color: evt.state === "done" || evt.state === "error" ? "#8A8886" : "#333333",
-                  fontFamily: "Inter, sans-serif",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {evt.path}
-              </span>
-            </div>
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: evt.state === "syncing" || evt.state === "error" ? 600 : "normal",
-                color: evt.state === "syncing" ? "#0B57D0"
-                  : evt.state === "error" ? "#D14343"
-                  : "#A8A6A4",
-                fontFamily: "Inter, sans-serif",
-                flexShrink: 0,
-                textAlign: "right",
-              }}
-            >
-              {progressLabel}
-            </span>
-          </div>
-        );
-      })}
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: evt.state === "syncing" || evt.state === "error" ? 600 : "normal",
+          color: evt.state === "syncing" ? "#0B57D0"
+            : evt.state === "error" ? "#D14343"
+            : "#A8A6A4",
+          fontFamily: "Inter, sans-serif",
+          flexShrink: 0,
+          textAlign: "right",
+        }}
+      >
+        {progressLabel}
+      </span>
     </div>
   );
 }
@@ -381,11 +372,10 @@ export function SyncFolderWidget({
     return "idle";
   })();
 
-  // Split events by direction. "From you" = user → VPS, "To you" = VPS → user.
-  // Cap each group at 3 so the panel stays compact.
-  const inboundEvents = syncEvents.filter((e) => e.direction === "inbound").slice(0, 3);
-  const outboundEvents = syncEvents.filter((e) => e.direction === "outbound").slice(0, 3);
-  const hasEvents = inboundEvents.length > 0 || outboundEvents.length > 0;
+  // Chronological mixed list. Events from backend are already sorted by
+  // timestamp desc; cap at 6 rows so the panel stays compact.
+  const displayedEvents = syncEvents.slice(0, 6);
+  const hasEvents = displayedEvents.length > 0;
 
   return (
     <>
@@ -570,24 +560,13 @@ export function SyncFolderWidget({
             {/* Divider */}
             <div style={{ height: 1, width: "100%", background: "#F7F6F5" }} />
 
-            {/* File sync rows — split into inbound ("From you") and outbound ("To you") */}
+            {/* File sync rows — chronological mixed list, per-row ↑/↓ arrow */}
             {hasEvents ? (
-              <>
-                {inboundEvents.length > 0 && (
-                  <EventGroup
-                    label="From you"
-                    Icon={ArrowDownToLine}
-                    events={inboundEvents}
-                  />
-                )}
-                {outboundEvents.length > 0 && (
-                  <EventGroup
-                    label="To you"
-                    Icon={ArrowUpFromLine}
-                    events={outboundEvents}
-                  />
-                )}
-              </>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {displayedEvents.map((evt, i) => (
+                  <FileSyncRow key={`${evt.path}-${evt.timestamp}-${i}`} evt={evt} />
+                ))}
+              </div>
             ) : (
               <div style={{ padding: "4px 0" }}>
                 <span style={{ fontSize: 12, color: "#A8A6A4", fontFamily: "Inter, sans-serif" }}>
