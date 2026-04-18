@@ -440,7 +440,23 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
                 old_len = len(history)
                 history = compress_history(history, last_prompt_tokens)
                 if len(history) < old_len:
-                    history[0] = {"role": "system", "content": make_system_prompt()}
+                    # Keep the regenerated system prompt scoped to the
+                    # current session's workspace.
+                    _ws_id = None
+                    try:
+                        from context import get_context
+                        from core.session import sessions
+                        _ctx = get_context()
+                        _uid = _ctx.get("user_id") if _ctx else None
+                        if _uid:
+                            _st = sessions.get_status(_uid)
+                            _ws_id = _st.get("workspace_id") if _st else None
+                    except Exception:
+                        _ws_id = None
+                    history[0] = {
+                        "role": "system",
+                        "content": make_system_prompt(workspace_id=_ws_id),
+                    }
                     print(f"\033[35m  📦 Context compressed: {old_len} → {len(history)} messages\033[0m")
                     log_event(log_file, {
                         "type": "context_compressed", "round": round_num,

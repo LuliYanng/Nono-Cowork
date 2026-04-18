@@ -1432,7 +1432,13 @@ async def get_sync_status():
 
 
 @app.get("/api/sync/events")
-async def list_sync_events(minutes: int = 30, limit: int = 20):
+async def list_sync_events(
+    minutes: int = 30,
+    limit: int = 20,
+    workspace_id: str | None = None,
+    folder_id: str | None = None,
+    scope: str = "active",
+):
     """List recent file-level sync events from the Syncthing event buffer.
 
     These are per-file events (added/modified/deleted) tracked by the
@@ -1440,8 +1446,13 @@ async def list_sync_events(minutes: int = 30, limit: int = 20):
     outbound (VPS → user) directions.
 
     Query params:
-        minutes: Time window in minutes (default: 30)
-        limit:   Max events to return (default: 20)
+        minutes:      Time window in minutes (default: 30)
+        limit:        Max events to return (default: 20)
+        workspace_id: When set, only events belonging to this workspace's folder
+        folder_id:    When set, only events for this raw Syncthing folder_id
+        scope:        "active" (default) = filter by the current session's
+                      workspace; "all" = no workspace filter. Ignored when
+                      ``workspace_id``/``folder_id`` is explicitly supplied.
 
     Returns: {
         events: [{
@@ -1459,12 +1470,35 @@ async def list_sync_events(minutes: int = 30, limit: int = 20):
     }
     """
     from integrations.syncthing_watcher import get_event_buffer, _format_time_ago
+    from core.workspace import workspaces as _workspaces
+
+    # Resolve the effective folder_id filter.
+    # Explicit folder_id wins → explicit workspace_id → scope-based default.
+    target_folder_id: str | None = folder_id
+    if not target_folder_id and workspace_id:
+        ws = _workspaces.get(workspace_id)
+        if ws:
+            target_folder_id = ws.get("folder_id")
+    if not target_folder_id and not workspace_id and scope == "active":
+        # Default: scope to the active session's workspace so the UI
+        # only shows events for the workspace the user is looking at.
+        status = sessions.get_status(DESKTOP_USER_ID)
+        active_ws_id = status.get("workspace_id") if status else None
+        if active_ws_id:
+            ws = _workspaces.get(active_ws_id)
+            if ws:
+                target_folder_id = ws.get("folder_id")
 
     buffer = get_event_buffer()
     if not buffer:
         return {"events": [], "total_syncing": 0}
 
-    recent = buffer.get_recent(minutes=minutes, limit=limit)
+    # Over-fetch so we still have `limit` matches after folder filtering
+    fetch_limit = limit if not target_folder_id else max(limit * 3, 60)
+    recent = buffer.get_recent(minutes=minutes, limit=fetch_limit)
+    if target_folder_id:
+        recent = [e for e in recent if e.folder_id == target_folder_id]
+    recent = recent[:limit]
 
     events = []
     syncing_count = 0
@@ -1501,6 +1535,9 @@ async def list_sync_events(minutes: int = 30, limit: int = 20):
         from tools.syncthing import SyncthingClient
         st = SyncthingClient()
         for f in st.get_folders():
+            # Respect the workspace scoping above
+            if target_folder_id and f.get("id") != target_folder_id:
+                continue
             try:
                 fs = st.get_folder_status(f["id"])
                 need_files = fs.get("needFiles", 0)

@@ -19,18 +19,50 @@ logger = logging.getLogger("prompt")
 
 # ─── Workspace resolution ───────────────────────────────────────
 
-def _resolve_workspace() -> str:
+def _resolve_workspace(workspace_id: str | None = None) -> str:
     """Resolve the workspace directory path.
 
     Priority:
-    1. WORKSPACE_DIR env var (explicit config)
-    2. Auto-detect from Syncthing API (first synced folder path)
-    3. Fallback to ~/
+    1. Explicit ``workspace_id`` — look up the workspace record and
+       return its bound Syncthing folder path
+    2. Default workspace (if any)
+    3. WORKSPACE_DIR env var (explicit config)
+    4. Auto-detect from Syncthing API (first synced folder path)
+    5. Fallback to ~/
     """
+    # 1. Session-scoped workspace
+    if workspace_id:
+        try:
+            from core.workspace import workspaces
+            from tools.syncthing import SyncthingClient
+            ws = workspaces.get(workspace_id)
+            if ws and ws.get("folder_id"):
+                st = SyncthingClient()
+                for f in st.get_folders():
+                    if f.get("id") == ws["folder_id"]:
+                        return f["path"]
+        except Exception as e:
+            logger.debug("Workspace-scoped resolve failed: %s", e)
+
+    # 2. Default workspace
+    try:
+        from core.workspace import workspaces
+        from tools.syncthing import SyncthingClient
+        default = workspaces.get_default()
+        if default and default.get("folder_id"):
+            st = SyncthingClient()
+            for f in st.get_folders():
+                if f.get("id") == default["folder_id"]:
+                    return f["path"]
+    except Exception as e:
+        logger.debug("Default-workspace resolve failed: %s", e)
+
+    # 3. env override
     env_workspace = os.getenv("WORKSPACE_DIR", "").strip()
     if env_workspace:
         return os.path.expanduser(env_workspace)
 
+    # 4. Syncthing first folder
     try:
         from tools.syncthing import SyncthingClient
         st = SyncthingClient()
@@ -40,6 +72,7 @@ def _resolve_workspace() -> str:
     except Exception:
         pass
 
+    # 5. Home directory
     return os.path.expanduser("~/")
 
 
@@ -362,13 +395,17 @@ To update memories, use the `memory_write` tool — it OVERWRITES the entire fil
 
 # ─── Builder ────────────────────────────────────────────────────
 
-def make_system_prompt() -> str:
+def make_system_prompt(workspace_id: str | None = None) -> str:
     """Assemble the system prompt from all sections.
 
     Each section is generated independently. Empty sections are skipped.
     To add a new section, write a _section_xxx() function and add it below.
+
+    When a ``workspace_id`` is provided, the workspace path is taken from
+    that workspace's bound Syncthing folder. Otherwise we fall back to
+    the default workspace / env var / first folder / home.
     """
-    workspace = _resolve_workspace()
+    workspace = _resolve_workspace(workspace_id=workspace_id)
 
     sections = [
         _section_role(workspace),

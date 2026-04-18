@@ -572,17 +572,24 @@ class SyncthingEventWatcher:
 
     # ── Context generation ──
 
-    def get_sync_context(self) -> str:
+    def get_sync_context(self, folder_id: str | None = None) -> str:
         """Generate the <file_sync_activity> context block for injection.
 
         Only inbound events (user → VPS) are surfaced — the Agent already
         knows what it wrote itself, and including outbound events would
         create noisy self-reference.
 
+        If ``folder_id`` is provided, only events from that folder are
+        surfaced — this keeps the current session's context scoped to
+        its own workspace.
+
         Returns empty string if no recent events — zero overhead in that case.
         """
         all_recent = self._buffer.get_recent(minutes=30, limit=40)
-        recent = [e for e in all_recent if e.direction == "inbound"][:20]
+        recent = [e for e in all_recent if e.direction == "inbound"]
+        if folder_id:
+            recent = [e for e in recent if e.folder_id == folder_id]
+        recent = recent[:20]
         if not recent:
             return ""
 
@@ -613,19 +620,22 @@ class SyncthingEventWatcher:
                 else:
                     lines.append(f"• {ago} — {conflict}{icon} {e.action}: {display_path} (⏳ syncing)")
 
-        # Folder-level sync status
-        folder_status = self._get_folder_sync_status()
+        # Folder-level sync status (scoped when folder_id given)
+        folder_status = self._get_folder_sync_status(folder_id=folder_id)
         if folder_status:
             lines.append(folder_status)
 
         header = "Recent file changes from user's device (newest first):"
         return f"<file_sync_activity>\n{header}\n" + "\n".join(lines) + "\n</file_sync_activity>"
 
-    def _get_folder_sync_status(self) -> str:
-        """Check if any folder is still actively syncing."""
+    def _get_folder_sync_status(self, folder_id: str | None = None) -> str:
+        """Check if any (or a specific) folder is still actively syncing."""
         try:
-            for folder_id in self._folder_paths:
-                status = self._st.get_folder_status(folder_id)
+            folders_to_check = (
+                [folder_id] if folder_id else list(self._folder_paths)
+            )
+            for fid in folders_to_check:
+                status = self._st.get_folder_status(fid)
                 need_files = status.get("needFiles", 0)
                 need_bytes = status.get("needBytes", 0)
                 if need_files > 0:
@@ -674,14 +684,17 @@ def stop_watcher():
         _watcher.stop()
 
 
-def get_sync_context() -> str:
+def get_sync_context(folder_id: str | None = None) -> str:
     """Get formatted sync context for injection into user messages.
+
+    When ``folder_id`` is given, only events from that folder are
+    surfaced (so the current session only sees its own workspace).
 
     Returns empty string if watcher is not running or no recent events.
     """
     if _watcher:
         try:
-            return _watcher.get_sync_context()
+            return _watcher.get_sync_context(folder_id=folder_id)
         except Exception as e:
             logger.debug("Failed to get sync context: %s", e)
     return ""

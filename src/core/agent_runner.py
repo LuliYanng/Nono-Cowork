@@ -60,8 +60,20 @@ def run_agent_for_message(user_id: str, user_text: str,
         log_file = session["log_file"]  # Session-level log file
         model_override = session.get("model_override")  # Per-session model
 
-        # Augment user message with recent file sync context (if any)
-        sync_ctx = get_sync_context()
+        # Scope sync context to the session's workspace (if any).
+        # Falls back to all folders when the workspace/folder can't be
+        # resolved so behaviour matches the pre-workspace version.
+        from core.workspace import resolve_folder_id_for_session
+        workspace_folder_id = resolve_folder_id_for_session(session)
+        sync_ctx = get_sync_context(folder_id=workspace_folder_id)
+
+        # Mark the workspace active when the user actually sends a message
+        if session.get("workspace_id"):
+            try:
+                from core.workspace import workspaces as _workspaces
+                _workspaces.touch(session["workspace_id"])
+            except Exception:
+                pass
 
         # Log to journalctl for live debugging
         logger.info("[%s] User: %s", channel_name, user_text)

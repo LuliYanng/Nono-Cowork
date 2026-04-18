@@ -176,7 +176,8 @@ class SessionManager:
             "session_id": session_id,
             "workspace_id": resolved_ws_id,
             "history": [
-                {"role": "system", "content": make_system_prompt()}
+                {"role": "system",
+                 "content": make_system_prompt(workspace_id=resolved_ws_id)}
             ],
             "token_stats": {
                 "total_prompt_tokens": 0,
@@ -272,8 +273,12 @@ class SessionManager:
         # Regenerate system prompt (picks up fresh time, memory, service status)
         from core.prompt import make_system_prompt
         history = data.get("history", [])
+        ws_id = data.get("workspace_id")
         if history and history[0].get("role") == "system":
-            history[0] = {"role": "system", "content": make_system_prompt()}
+            history[0] = {
+                "role": "system",
+                "content": make_system_prompt(workspace_id=ws_id),
+            }
 
         return {
             "session_id": data["id"],
