@@ -32,6 +32,7 @@ dependencies = [
 
 [project.scripts]
 agent = "src.agent:main"
+nono-cowork = "src.main:main"
 feishu-bot = "src.channels.feishu:main"
 telegram-bot = "src.channels.telegram:main"
 desktop-agent = "src.channels.desktop:main"
