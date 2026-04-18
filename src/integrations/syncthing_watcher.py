@@ -106,6 +106,31 @@ class SyncEventBuffer:
                     return e
         return None
 
+    def mark_outbound_folder_done(self, folder_id: str) -> int:
+        """Mark all still-pending outbound events in a folder as synced.
+
+        Syncthing only emits ItemFinished on the RECEIVING device. So when
+        the VPS pushes a file to the user's machine, the VPS never sees a
+        per-file completion signal — outbound events stay in "syncing"
+        state forever. We compensate by listening to FolderCompletion:
+        when the remote device reports 100% for a folder, every pending
+        outbound file in that folder has necessarily been delivered.
+
+        Returns the number of events patched.
+        """
+        patched = 0
+        with self._lock:
+            for e in self._events:
+                if (
+                    e.folder_id == folder_id
+                    and e.direction == "outbound"
+                    and not e.synced
+                ):
+                    e.synced = True
+                    e.progress = 100
+                    patched += 1
+        return patched
+
     def get_recent(self, minutes: int = 30, limit: int = 20) -> list[SyncEvent]:
         """Get recent events, deduplicated by path (latest wins), newest first.
 
@@ -275,12 +300,18 @@ class SyncthingEventWatcher:
     # Subset of the general event stream we care about. RemoteChangeDetected
     # and LocalChangeDetected tell us WHAT changed; the Item*/DownloadProgress
     # events tell us how the transfer of that change is progressing.
+    # FolderCompletion fills a crucial gap: Syncthing only fires ItemFinished
+    # on the RECEIVING device, so outbound files (VPS → user) have no per-file
+    # completion signal on our side. FolderCompletion tells us when the
+    # remote device has caught up to 100%, at which point we can flip all
+    # outstanding outbound events for that folder to done.
     _SUBSCRIBED_EVENTS = (
         "RemoteChangeDetected,"
         "LocalChangeDetected,"
         "ItemStarted,"
         "ItemFinished,"
-        "DownloadProgress"
+        "DownloadProgress,"
+        "FolderCompletion"
     )
 
     def _event_loop(self):
@@ -314,6 +345,8 @@ class SyncthingEventWatcher:
                         self._process_item_finished(event)
                     elif etype == "DownloadProgress":
                         self._process_download_progress(event)
+                    elif etype == "FolderCompletion":
+                        self._process_folder_completion(event)
 
                 # Persist state periodically (after each batch)
                 if events:
@@ -464,6 +497,36 @@ class SyncthingEventWatcher:
                     continue
                 pct = max(0, min(99, int(done * 100 / total)))
                 self._buffer.patch_latest(folder_id, path, progress=pct)
+
+    def _process_folder_completion(self, event: dict):
+        """FolderCompletion: a REMOTE device's completion state for a folder changed.
+
+        This is our only reliable signal that outbound files (VPS → user)
+        have been delivered. When completion for a remote device hits 100%
+        with no need-items remaining, flip every still-pending outbound
+        event in that folder to done.
+
+        Event shape: {"data": {folder, device, completion (0..100),
+        needBytes, needItems, needDeletes, remoteState, sequence}}
+        """
+        data = event.get("data", {})
+        folder_id = data.get("folder", "")
+        completion = data.get("completion", 0)
+        need_items = data.get("needItems", 0)
+        need_deletes = data.get("needDeletes", 0)
+        if not folder_id:
+            return
+        # Fully caught up only when completion==100 AND nothing still needed.
+        # (Syncthing sometimes reports 100% completion with residual need-items
+        # during rapid change bursts; being strict avoids premature done-flips.)
+        if completion < 100 or need_items > 0 or need_deletes > 0:
+            return
+        patched = self._buffer.mark_outbound_folder_done(folder_id)
+        if patched:
+            logger.info(
+                "FolderCompletion 100%% for %s — marked %d outbound event(s) as done",
+                folder_id, patched,
+            )
 
     # ── Context generation ──
 
