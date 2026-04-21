@@ -285,12 +285,20 @@ Do NOT call sync tools for operations outside {workspace} (e.g., installing skil
 - If no <file_sync_activity> block is present, no files were recently synced from the user's device
 
 ## Workspace Hygiene (CRITICAL)
-The sync folder ({workspace}) is ONLY for user-facing files. NEVER create intermediate artifacts here:
+The sync folder ({workspace}) is ONLY for user-facing files. The core principle: **only finished, user-facing files belong in the sync folder. All intermediate work happens in {AGENT_WORK_DIR}/.**
+
+### Downloads & file processing — use $STAGING_DIR
+Any operation that produces intermediate/temporary files MUST run outside the sync folder. The environment variable `$STAGING_DIR` is available in all run_command calls for this purpose.
+- ALWAYS download files (curl, wget, yt-dlp, git clone archives, etc.) to `$STAGING_DIR` first, then `mv` the final result into {workspace}. Example: `yt-dlp -o '$STAGING_DIR/%(title)s.%(ext)s' URL && mv '$STAGING_DIR/result.mp4' '{workspace}/'`
+- ALWAYS run file conversions (ffmpeg, ImageMagick, pandoc, etc.) with output to `$STAGING_DIR`, then `mv` the result
+- ALWAYS extract archives (unzip, tar) into `$STAGING_DIR`, then `mv` what's needed
+- WHY: Syncthing watches {workspace} in real-time. Downloading directly there causes it to sync incomplete/temporary files, which leads to orphaned transfer artifacts on the user's machine when the source file is later renamed or deleted
+
+### Dev artifacts — keep out of sync
 - NEVER create Python virtual environments (venv, .venv) inside {workspace}. Use {AGENT_WORK_DIR}/ instead
 - NEVER run pip install / uv pip install with a venv located inside {workspace}
 - NEVER place build outputs (dist/, build/, *.egg-info) inside {workspace}
-- When writing scripts that need dependencies, create the venv in {AGENT_WORK_DIR}/<script_name>/ and reference it from there
-- Only the final output files (documents, data, scripts themselves) should be saved to {workspace}"""
+- When writing scripts that need dependencies, create the venv in {AGENT_WORK_DIR}/<script_name>/ and reference it from there"""
 
 
 def _section_skills() -> str:
@@ -351,8 +359,11 @@ def _section_work_habits() -> str:
 - ALWAYS use edit_file to modify existing files — it auto-saves a backup before each edit. NEVER use run_command("sed -i ...") or shell redirects to modify files in the sync folder, because those bypass the backup system
 - When encountering errors, carefully analyze the traceback and identify the root cause before fixing
 - If the same error persists after 3 fix attempts, proactively search the web for solutions
+- A shared tool environment exists at {AGENT_WORK_DIR}/ — CLI tools installed here persist across all sessions
 - When you need extra Python packages, create a venv with `python3 -m venv {AGENT_WORK_DIR}/.venv` and install there. NEVER create venvs in the sync folder
-- To run scripts with the venv: `. {AGENT_WORK_DIR}/.venv/bin/activate && pip install ... && python3 script.py`"""
+- To run scripts with the venv: `. {AGENT_WORK_DIR}/.venv/bin/activate && pip install ... && python3 script.py`
+- For standalone CLI tools (yt-dlp, etc.), install them to {AGENT_WORK_DIR}/bin/ so they're available in future sessions. Example: `curl -L ... -o {AGENT_WORK_DIR}/bin/yt-dlp && chmod +x {AGENT_WORK_DIR}/bin/yt-dlp`
+- Before installing a tool, check if it already exists by running `which <tool>` — it may have been installed in a previous session"""
 
 
 def _section_safety(workspace: str) -> str:

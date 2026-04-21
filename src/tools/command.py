@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 from tools.registry import tool
+from config import AGENT_WORK_DIR
 
 
 # ————— Background task management —————
@@ -19,7 +20,7 @@ _bg_processes: dict[int, dict] = {}   # PID → {"proc": Popen, "output": list[s
 @tool(
     name="run_command",
     tags=["execute"],
-    description="Execute a bash command on the Linux server. Can be used for: git clone, installing dependencies (pip install), running Python scripts, viewing file contents (cat/ls/find), creating directories, downloading files from URLs (curl -o /path/file 'url'), and any other terminal operations. Short-running commands return output directly. Long-running commands automatically return a PID; use check_command_status to view the result later.\n\nNote: If the output is very large, it will be automatically saved to a temporary file. A preview and file path will be returned; use read_file with line ranges to view specific sections.",
+    description="Execute a bash command on the Linux server. Can be used for: git clone, installing dependencies (pip install), running Python scripts, viewing file contents (cat/ls/find), creating directories, downloading files from URLs, and any other terminal operations. Short-running commands return output directly. Long-running commands automatically return a PID; use check_command_status to view the result later.\n\nDownloads & file processing: $STAGING_DIR is available as an environment variable pointing to a temp staging area outside the sync folder. ALWAYS download/convert/extract files there first, then mv the final result to the workspace. Example: yt-dlp -o '$STAGING_DIR/%(title)s.%(ext)s' URL && mv '$STAGING_DIR/video.mp4' /workspace/path/\n\nNote: If the output is very large, it will be automatically saved to a temporary file. A preview and file path will be returned; use read_file with line ranges to view specific sections.",
     parameters={
         "type": "object",
         "properties": {
@@ -41,9 +42,24 @@ def run_command(command: str, cwd: str = "~") -> str:
     cwd = os.path.expanduser(cwd)
     WAIT_SECONDS = 120
 
+    # Inject shared tool directories into PATH so previously-installed
+    # CLI tools (yt-dlp, etc.) are available across all sessions.
+    env = os.environ.copy()
+    extra_paths = [
+        os.path.join(AGENT_WORK_DIR, "bin"),
+        os.path.join(AGENT_WORK_DIR, ".venv", "bin"),
+    ]
+    env["PATH"] = ":".join(extra_paths) + ":" + env.get("PATH", "")
+
+    # Expose a staging directory for downloads/processing so the agent
+    # can easily reference it as $STAGING_DIR in commands.
+    staging_dir = os.path.join(AGENT_WORK_DIR, "staging")
+    os.makedirs(staging_dir, exist_ok=True)
+    env["STAGING_DIR"] = staging_dir
+
     try:
         proc = subprocess.Popen(
-            command, shell=True, cwd=cwd,
+            command, shell=True, cwd=cwd, env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True,
         )

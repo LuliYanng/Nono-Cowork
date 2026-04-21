@@ -191,6 +191,9 @@ _IGNORE_PATTERNS = [
     ".stversions/*",
     ".agent_snapshots/*",
     "*.tmp",
+    "*.part",           # yt-dlp partial downloads
+    "*.ytdl",           # yt-dlp metadata temp
+    "~syncthing~*",     # Syncthing transfer temp files
     "~$*",              # MS Office temp files
     ".DS_Store",
     "Thumbs.db",

@@ -190,6 +190,8 @@ _REQUIRED_STIGNORE_PATTERNS = [
         "(?d)**/*.swp",
         "(?d)**/*.swo",
         "(?d)**/*~",
+        "(?d)**/*.part",
+        "(?d)**/*.ytdl",
     ]),
     ("IDE and system files", [
         "(?d)**/.idea",
