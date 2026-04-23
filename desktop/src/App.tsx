@@ -1710,16 +1710,16 @@ function App() {
                           <ModelSelectorTrigger>
                             <Button
                               variant="ghost"
-                              className="h-6 px-1.5 text-[11px] text-muted-foreground/60 hover:text-foreground cursor-pointer gap-1"
+                              className="h-8 px-2.5 text-sm text-muted-foreground/80 hover:text-foreground cursor-pointer gap-1.5"
                             >
                               {(() => {
                                 const current = sessionStatus.model || '';
                                 const info = resolveModelInfo(current, availableModels);
                                 return (
                                   <>
-                                    {info.provider && <ModelSelectorLogo provider={info.provider} className="size-3" />}
+                                    {info.provider && <ModelSelectorLogo provider={info.provider} className="size-4" />}
                                     <span>{info.name || 'Select model'}</span>
-                                    <ChevronDown className="size-3 opacity-50" />
+                                    <ChevronDown className="size-3.5 opacity-50" />
                                   </>
                                 );
                               })()}
@@ -1981,6 +1981,7 @@ function App() {
                           syncState={syncState}
                           activeWorkspace={activeWorkspace}
                         />
+
                         {/* Model Selector */}
                         <ModelSelector open={modelSelectorOpen} onOpenChange={(open) => {
                           setModelSelectorOpen(open);
@@ -1989,16 +1990,16 @@ function App() {
                           <ModelSelectorTrigger>
                             <Button
                               variant="ghost"
-                              className="h-6 px-1.5 text-[11px] text-muted-foreground/60 hover:text-foreground cursor-pointer gap-1"
+                              className="h-8 px-2.5 text-sm text-muted-foreground/80 hover:text-foreground cursor-pointer gap-1.5"
                             >
                               {(() => {
                                 const current = sessionStatus.model || '';
                                 const info = resolveModelInfo(current, availableModels);
                                 return (
                                   <>
-                                    {info.provider && <ModelSelectorLogo provider={info.provider} className="size-3" />}
+                                    {info.provider && <ModelSelectorLogo provider={info.provider} className="size-4" />}
                                     <span>{info.name || 'Select model'}</span>
-                                    <ChevronDown className="size-3 opacity-50" />
+                                    <ChevronDown className="size-3.5 opacity-50" />
                                   </>
                                 );
                               })()}
@@ -2037,7 +2038,8 @@ function App() {
                             </ModelSelectorList>
                           </ModelSelectorContent>
                         </ModelSelector>
-
+                      </div>
+                      <div className="flex items-center gap-1.5">
                         {/* Context Usage */}
                         {sessionStatus.active && (sessionStatus.prompt_tokens ?? 0) > 0 && (
                           <Context
@@ -2064,21 +2066,21 @@ function App() {
                             </ContextContent>
                           </Context>
                         )}
+                        <PromptInputSubmit
+                          className="cursor-pointer"
+                          disabled={!isStreaming && !input.trim()}
+                          status={isStopping ? "submitted" : isStreaming ? "streaming" : "ready"}
+                          onStop={() => {
+                            if (isStopping) return;
+                            setIsStopping(true);
+                            fetch(`${API_BASE}/api/command/stop`, {
+                              method: "POST",
+                              headers: authHeaders({ "Content-Type": "application/json" }),
+                              body: JSON.stringify({}),
+                            }).catch(() => {});
+                          }}
+                        />
                       </div>
-                      <PromptInputSubmit
-                        className="cursor-pointer"
-                        disabled={!isStreaming && !input.trim()}
-                        status={isStopping ? "submitted" : isStreaming ? "streaming" : "ready"}
-                        onStop={() => {
-                          if (isStopping) return;
-                          setIsStopping(true);
-                          fetch(`${API_BASE}/api/command/stop`, {
-                            method: "POST",
-                            headers: authHeaders({ "Content-Type": "application/json" }),
-                            body: JSON.stringify({}),
-                          }).catch(() => {});
-                        }}
-                      />
                     </PromptInputFooter>
                   </PromptInput>
                 </div>

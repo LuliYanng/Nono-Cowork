@@ -19,13 +19,13 @@ import {
   FileTextIcon,
   PencilIcon,
   RefreshCwIcon,
-  Loader2Icon,
   PlugIcon,
 } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { isValidElement, useCallback, useState } from "react";
 
 import { CodeBlock } from "./code-block";
+import { Shimmer } from "./shimmer";
 import { useScrollAnchor } from "./use-scroll-anchor";
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -42,6 +42,65 @@ import { useScrollAnchor } from "./use-scroll-anchor";
 // we fall back to `{toolkit}.com` as a best guess; if that 404s the
 // <img onError> handler shows a letter-avatar fallback.
 // ────────────────────────────────────────────────────────────────────────────
+// Human-readable display names for backend tool names.
+// Keys are the raw snake_case names from the backend; values are the
+// user-facing labels rendered in the chat UI. Unknown tools fall back
+// to auto-formatting (snake_case → Title Case).
+// ────────────────────────────────────────────────────────────────────────────
+
+const TOOL_DISPLAY_NAMES: Record<string, [string, string]> = {
+  //                                        [active,              done]
+  // File operations
+  read_file:                                ["Reading",           "Read"],
+  edit_file:                                ["Editing",           "Edited"],
+  write_file:                               ["Writing",           "Wrote"],
+  list_snapshots:                           ["Checking snapshots","Checked snapshots"],
+  // Commands
+  run_command:                              ["Running",           "Ran"],
+  check_command_status:                     ["Checking status",   "Checked status"],
+  // Web
+  web_search:                               ["Searching",         "Searched"],
+  read_webpage:                             ["Reading page",      "Read page"],
+  // Memory
+  memory_write:                             ["Memorizing",        "Memorized"],
+  // Delegation
+  delegate:                                 ["Delegating",        "Delegated"],
+  delegate_status:                          ["Checking delegate", "Checked delegate"],
+  // Channel
+  send_file:                                ["Sending",           "Sent"],
+  // Routines
+  list_routines:                            ["Listing routines",  "Listed routines"],
+  create_routine:                           ["Creating routine",  "Created routine"],
+  update_routine:                           ["Updating routine",  "Updated routine"],
+  manage_routine:                           ["Managing routine",  "Managed routine"],
+  // Sync (Syncthing)
+  sync_status:                              ["Checking sync",     "Checked sync"],
+  sync_wait:                                ["Waiting for sync",  "Waited for sync"],
+  sync_versions:                            ["Checking versions", "Checked versions"],
+  sync_restore:                             ["Restoring",         "Restored"],
+  sync_pause:                               ["Pausing sync",      "Paused sync"],
+  sync_resume:                              ["Resuming sync",     "Resumed sync"],
+  sync_ignore_add:                          ["Ignoring",          "Ignored"],
+  // Composio
+  composio_list_triggers:                   ["Listing triggers",  "Listed triggers"],
+  composio_wait_for_connection:             ["Connecting",        "Connected"],
+  // Delivery (hidden from UI, but included for completeness)
+  report_result:                            ["Reporting",         "Reported"],
+};
+
+/** Convert a raw tool name to a human-readable display label.
+ *  Uses present participle (-ing) when active, past tense when done.
+ *  Prefers the curated mapping; falls back to auto-formatting
+ *  snake_case → Title Case (e.g. "my_cool_tool" → "My cool tool"). */
+export function getToolDisplayName(rawName: string, isDone = false): string {
+  const entry = TOOL_DISPLAY_NAMES[rawName];
+  if (entry) return isDone ? entry[1] : entry[0];
+  // Auto-format: replace underscores with spaces, capitalize first letter
+  const formatted = rawName.replace(/_/g, " ");
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+}
+
+//
 
 // Map Composio toolkit prefix → canonical domain for favicon lookup.
 // Keep domain specific enough that the favicon is the brand logo
@@ -258,10 +317,7 @@ export type ToolHeaderProps = {
     }
 );
 
-const getToolIcon = (name: string, state: ToolPart["state"]) => {
-  if (state === "input-streaming" || state === "input-available") {
-    return <Loader2Icon className="size-[16px] text-muted-foreground animate-spin" />;
-  }
+const getToolIcon = (name: string) => {
   const n = name.toLowerCase();
   if (n.includes('command') || n.includes('bash')) return <TerminalIcon className="size-[16px] text-muted-foreground" />;
   if (n.includes('search') || n.includes('web')) return <SearchIcon className="size-[16px] text-muted-foreground" />;
@@ -322,7 +378,7 @@ export const ToolHeader = ({
         {hasBrandLogos && !isLoading ? (
           <StackedBrandLogos toolkits={composioToolkits} size={22} />
         ) : (
-          getToolIcon(derivedName, state)
+          getToolIcon(derivedName)
         )}
       </div>
       <span
@@ -343,9 +399,17 @@ export const ToolHeader = ({
             )}
             {resolvedTitle}
           </>
+        ) : isLoading ? (
+          <Shimmer duration={1}>
+            {getToolDisplayName(derivedName, false)}{" "}
+            {resolvedTitle && resolvedTitle !== derivedName ? resolvedTitle : null}
+          </Shimmer>
         ) : (
           <>
-            {derivedName}: "{resolvedTitle ?? derivedName}"
+            <span className="text-foreground/70 mr-1.5">
+              {getToolDisplayName(derivedName, true)}
+            </span>
+            {resolvedTitle && resolvedTitle !== derivedName ? resolvedTitle : null}
           </>
         )}
       </span>
