@@ -1449,20 +1449,29 @@ async def delete_sync_folder(folder_id: str):
 
 @app.get("/api/sync/folders")
 async def list_sync_folders():
-    """List all synced folders on VPS with their status."""
+    """List all synced folders with cross-device sync status.
+
+    state/completion reflects both VPS and every connected peer — a folder
+    is only 'idle' when all sides have drained pending changes. The older
+    VPS-local-only view flipped to idle while the user's machine was still
+    downloading, which made the sync widget misleading.
+    """
     try:
         from tools.syncthing import SyncthingClient
         st = SyncthingClient()
 
         folders = st.get_folders()
+        try:
+            connected = st.get_connected_device_ids()
+        except Exception:
+            connected = set()
+
         result = []
         for f in folders:
             try:
-                status = st.get_folder_status(f["id"])
-                state = status.get("state", "unknown")
-                global_bytes = status.get("globalBytes", 0)
-                in_sync_bytes = status.get("inSyncBytes", 0)
-                completion = (in_sync_bytes / global_bytes * 100) if global_bytes > 0 else 100.0
+                info = st.get_folder_sync_info(f["id"], connected=connected)
+                state = info["state"]
+                completion = info["completion"]
             except Exception:
                 state = "error"
                 completion = 0
@@ -1472,7 +1481,7 @@ async def list_sync_folders():
                 "label": f.get("label", f["id"]),
                 "path": f["path"],
                 "state": state,
-                "completion": round(completion, 1),
+                "completion": completion,
             })
 
         return {"folders": result}
@@ -1525,23 +1534,18 @@ async def get_sync_status():
                 "address": info.get("address", ""),
             })
 
-        # Folder status
+        # Folder status — cross-device view (VPS + connected peers)
         folders = st.get_folders()
+        connected_ids = {d["id"] for d in devices if d["connected"]}
         folder_statuses = []
         for f in folders:
             try:
-                fs = st.get_folder_status(f["id"])
-                state = fs.get("state", "unknown")
-                # Calculate completion percentage
-                global_bytes = fs.get("globalBytes", 0)
-                in_sync_bytes = fs.get("inSyncBytes", 0)
-                completion = (in_sync_bytes / global_bytes * 100) if global_bytes > 0 else 100.0
-
+                info = st.get_folder_sync_info(f["id"], connected=connected_ids)
                 folder_statuses.append({
                     "id": f["id"],
                     "label": f.get("label", f["id"]),
-                    "state": state,
-                    "completion": round(completion, 1),
+                    "state": info["state"],
+                    "completion": info["completion"],
                 })
             except Exception:
                 folder_statuses.append({

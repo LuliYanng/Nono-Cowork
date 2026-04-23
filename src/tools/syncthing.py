@@ -141,15 +141,122 @@ class SyncthingClient:
             params["sub"] = sub_path
         return self._post("/rest/db/scan", **params)
 
-    def is_idle(self, folder_id):
+    def get_my_device_id(self):
+        if not getattr(self, "_my_id", None):
+            self._my_id = self.get_system_status().get("myID", "")
+        return self._my_id
+
+    def get_peer_device_ids(self, folder_id):
+        """Device IDs sharing this folder, excluding self."""
+        my_id = self.get_my_device_id()
+        for f in self.get_folders():
+            if f["id"] == folder_id:
+                return [
+                    d["deviceID"] for d in (f.get("devices") or [])
+                    if d.get("deviceID") and d["deviceID"] != my_id
+                ]
+        return []
+
+    def get_connected_device_ids(self):
+        conns = (self.get_connections().get("connections") or {})
+        return {did for did, info in conns.items() if info.get("connected")}
+
+    def get_completion(self, folder_id, device_id=None):
+        """GET /rest/db/completion — reports how much the given device still
+        needs to pull. Omit device_id for self's completion against global."""
+        params = {"folder": folder_id}
+        if device_id:
+            params["device"] = device_id
+        return self._get("/rest/db/completion", **params)
+
+    def get_folder_sync_info(self, folder_id, connected=None):
+        """Cross-device sync summary. A folder is only 'idle' when both this
+        device and every connected peer have drained pending changes.
+        Disconnected peers are skipped — we can't observe them, and waiting
+        on them would block whenever the user's machine is off.
+        """
+        if connected is None:
+            try:
+                connected = self.get_connected_device_ids()
+            except Exception:
+                connected = set()
+
         status = self.get_folder_status(folder_id)
-        return status.get("state") == "idle"
+        local_state = status.get("state", "unknown")
+        global_bytes = status.get("globalBytes", 0) or 0
+        self_need_bytes = status.get("needBytes", 0) or 0
+        self_need_items = status.get("needTotalItems", 0) or 0
+
+        peer_need_bytes = 0
+        peer_need_items = 0
+        for dev in self.get_peer_device_ids(folder_id):
+            if dev not in connected:
+                continue
+            try:
+                comp = self.get_completion(folder_id, dev)
+                peer_need_bytes += comp.get("needBytes", 0) or 0
+                peer_need_items += comp.get("needItems", 0) or 0
+            except Exception:
+                pass
+
+        total_need_bytes = self_need_bytes + peer_need_bytes
+        total_need_items = self_need_items + peer_need_items
+
+        if local_state == "error":
+            state = "error"
+        elif (
+            local_state in ("scanning", "syncing")
+            or total_need_bytes > 0
+            or total_need_items > 0
+        ):
+            state = "syncing"
+        else:
+            state = "idle"
+
+        if global_bytes > 0:
+            completion = max(
+                0.0, (global_bytes - total_need_bytes) / global_bytes * 100
+            )
+        else:
+            completion = 100.0
+
+        return {
+            "state": state,
+            "completion": round(completion, 1),
+            "need_bytes": total_need_bytes,
+            "need_items": total_need_items,
+            "self_need_bytes": self_need_bytes,
+            "peer_need_bytes": peer_need_bytes,
+        }
+
+    def is_fully_synced(self, folder_id):
+        return self.get_folder_sync_info(folder_id)["state"] == "idle"
+
+    def is_idle(self, folder_id):
+        """Back-compat: VPS-local idle check only. Prefer is_fully_synced."""
+        return self.get_folder_status(folder_id).get("state") == "idle"
 
     def wait_for_sync(self, folder_id, timeout=30):
+        """Wait until both VPS and every connected peer have drained pending
+        changes. Triggers a scan first so new files are indexed and
+        announced before polling — otherwise /rest/db/completion can briefly
+        report 100% before the change reaches the peer's need count.
+        """
+        try:
+            self.scan(folder_id)
+        except Exception:
+            pass
+        time.sleep(0.8)
+
         start = time.time()
+        stable = 0
         while time.time() - start < timeout:
-            if self.is_idle(folder_id):
-                return True
+            if self.is_fully_synced(folder_id):
+                stable += 1
+                if stable >= 2:  # two consecutive clean reads
+                    return True
+            else:
+                stable = 0
             time.sleep(1)
         return False
 
@@ -356,12 +463,19 @@ def sync_wait(timeout: int = 30) -> str:
         if st.wait_for_sync(folder_id, timeout):
             status = st.get_folder_status(folder_id)
             return (
-                f"✅ Sync complete\n"
+                f"✅ Sync complete (both VPS and desktop)\n"
                 f"  Local files: {status.get('localFiles', '?')}\n"
                 f"  Global files: {status.get('globalFiles', '?')}"
             )
         else:
-            return f"⏳ Still syncing after {timeout}s. May have large changes, check again later."
+            info = st.get_folder_sync_info(folder_id)
+            pending = []
+            if info.get("self_need_bytes", 0) > 0:
+                pending.append(f"VPS still pulling {info['self_need_bytes']} bytes")
+            if info.get("peer_need_bytes", 0) > 0:
+                pending.append(f"desktop still pulling {info['peer_need_bytes']} bytes")
+            detail = "; ".join(pending) if pending else "no connected peer or index lag"
+            return f"⏳ Still syncing after {timeout}s ({detail}). Check again later."
 
     except requests.ConnectionError:
         return "❌ Cannot connect to Syncthing. Is the service running?"
