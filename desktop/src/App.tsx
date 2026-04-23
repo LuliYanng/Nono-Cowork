@@ -149,25 +149,24 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 
-// Map litellm provider names → ModelSelectorLogo provider names
-const PROVIDER_LOGO_MAP: Record<string, string> = {
-  gemini: "google",
-  anthropic: "anthropic",
-  openai: "openai",
-  deepseek: "deepseek",
-  dashscope: "alibaba",
-  mistral: "mistral",
-  groq: "groq",
-  xai: "xai",
-};
+// ── Model metadata (from backend MODEL_REGISTRY) ──
 
-// Capitalize provider name for display
+interface ModelInfo {
+  id: string;       // LiteLLM routing ID (e.g. "openrouter/anthropic/claude-sonnet-4.6")
+  name: string;     // Human-readable name (e.g. "Claude Sonnet 4.6")
+  provider: string; // Logo / grouping key (e.g. "anthropic")
+}
+
+type AvailableModels = ModelInfo[];
+
+// Capitalize provider slug for group headings
 function displayProvider(provider: string): string {
   const names: Record<string, string> = {
-    gemini: "Google",
+    google: "Google",
     anthropic: "Anthropic",
     openai: "OpenAI",
     deepseek: "DeepSeek",
+    minimax: "MiniMax",
     dashscope: "DashScope",
     mistral: "Mistral",
     groq: "Groq",
@@ -176,8 +175,18 @@ function displayProvider(provider: string): string {
   return names[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
-// Available models from backend
-type AvailableModels = string[];
+// Resolve display info for a model ID.
+// If the model is in availableModels, uses its metadata; otherwise falls back to
+// best-effort string parsing (handles both "provider/model" and "router/provider/model").
+function resolveModelInfo(modelId: string, models: ModelInfo[]): { name: string; provider: string } {
+  const found = models.find(m => m.id === modelId);
+  if (found) return { name: found.name, provider: found.provider };
+  const parts = modelId.split('/');
+  return {
+    name: parts[parts.length - 1] || modelId,
+    provider: parts.length >= 3 ? parts[1] : parts[0] || '',
+  };
+}
 
 // ── Types ──
 
@@ -1705,12 +1714,11 @@ function App() {
                             >
                               {(() => {
                                 const current = sessionStatus.model || '';
-                                const provider = current.split('/')[0];
-                                const logoProvider = PROVIDER_LOGO_MAP[provider];
+                                const info = resolveModelInfo(current, availableModels);
                                 return (
                                   <>
-                                    {logoProvider && <ModelSelectorLogo provider={logoProvider} className="size-3" />}
-                                    <span>{current.split('/').pop() || 'Select model'}</span>
+                                    {info.provider && <ModelSelectorLogo provider={info.provider} className="size-3" />}
+                                    <span>{info.name || 'Select model'}</span>
                                     <ChevronDown className="size-3 opacity-50" />
                                   </>
                                 );
@@ -1722,9 +1730,8 @@ function App() {
                             <ModelSelectorList>
                               <ModelSelectorEmpty>No models found.</ModelSelectorEmpty>
                               {Object.entries(
-                                availableModels.reduce<Record<string, string[]>>((groups, m) => {
-                                  const [provider] = m.split('/');
-                                  const key = provider || 'other';
+                                availableModels.reduce<Record<string, ModelInfo[]>>((groups, m) => {
+                                  const key = m.provider || 'other';
                                   if (!groups[key]) groups[key] = [];
                                   groups[key].push(m);
                                   return groups;
@@ -1732,18 +1739,16 @@ function App() {
                               ).map(([provider, models]) => (
                                 <ModelSelectorGroup key={provider} heading={displayProvider(provider)}>
                                   {models.map((m) => {
-                                    const modelName = m.split('/').slice(1).join('/');
-                                    const logoProvider = PROVIDER_LOGO_MAP[provider];
-                                    const isCurrent = m === sessionStatus.model;
+                                    const isCurrent = m.id === sessionStatus.model;
                                     return (
                                       <ModelSelectorItem
-                                        key={m}
-                                        value={m}
-                                        onSelect={() => handleModelSwitch(m)}
+                                        key={m.id}
+                                        value={m.id}
+                                        onSelect={() => handleModelSwitch(m.id)}
                                         className={isCurrent ? 'bg-accent' : ''}
                                       >
-                                        {logoProvider && <ModelSelectorLogo provider={logoProvider} className="size-4 mr-2" />}
-                                        <ModelSelectorName>{modelName}</ModelSelectorName>
+                                        {m.provider && <ModelSelectorLogo provider={m.provider} className="size-4 mr-2" />}
+                                        <ModelSelectorName>{m.name}</ModelSelectorName>
                                         {isCurrent && <span className="text-xs text-muted-foreground">current</span>}
                                       </ModelSelectorItem>
                                     );
@@ -1988,12 +1993,11 @@ function App() {
                             >
                               {(() => {
                                 const current = sessionStatus.model || '';
-                                const provider = current.split('/')[0];
-                                const logoProvider = PROVIDER_LOGO_MAP[provider];
+                                const info = resolveModelInfo(current, availableModels);
                                 return (
                                   <>
-                                    {logoProvider && <ModelSelectorLogo provider={logoProvider} className="size-3" />}
-                                    <span>{current.split('/').pop() || 'Select model'}</span>
+                                    {info.provider && <ModelSelectorLogo provider={info.provider} className="size-3" />}
+                                    <span>{info.name || 'Select model'}</span>
                                     <ChevronDown className="size-3 opacity-50" />
                                   </>
                                 );
@@ -2005,9 +2009,8 @@ function App() {
                             <ModelSelectorList>
                               <ModelSelectorEmpty>No models found.</ModelSelectorEmpty>
                               {Object.entries(
-                                availableModels.reduce<Record<string, string[]>>((groups, m) => {
-                                  const [provider] = m.split('/');
-                                  const key = provider || 'other';
+                                availableModels.reduce<Record<string, ModelInfo[]>>((groups, m) => {
+                                  const key = m.provider || 'other';
                                   if (!groups[key]) groups[key] = [];
                                   groups[key].push(m);
                                   return groups;
@@ -2015,18 +2018,16 @@ function App() {
                               ).map(([provider, models]) => (
                                 <ModelSelectorGroup key={provider} heading={displayProvider(provider)}>
                                   {models.map((m) => {
-                                    const modelName = m.split('/').slice(1).join('/');
-                                    const logoProvider = PROVIDER_LOGO_MAP[provider];
-                                    const isCurrent = m === sessionStatus.model;
+                                    const isCurrent = m.id === sessionStatus.model;
                                     return (
                                       <ModelSelectorItem
-                                        key={m}
-                                        value={m}
-                                        onSelect={() => handleModelSwitch(m)}
+                                        key={m.id}
+                                        value={m.id}
+                                        onSelect={() => handleModelSwitch(m.id)}
                                         className={isCurrent ? 'bg-accent' : ''}
                                       >
-                                        {logoProvider && <ModelSelectorLogo provider={logoProvider} className="size-4 mr-2" />}
-                                        <ModelSelectorName>{modelName}</ModelSelectorName>
+                                        {m.provider && <ModelSelectorLogo provider={m.provider} className="size-4 mr-2" />}
+                                        <ModelSelectorName>{m.name}</ModelSelectorName>
                                         {isCurrent && <span className="text-xs text-muted-foreground">current</span>}
                                       </ModelSelectorItem>
                                     );

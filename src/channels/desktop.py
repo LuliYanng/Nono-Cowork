@@ -27,7 +27,7 @@ from sse_starlette.sse import EventSourceResponse
 from channels.base import Channel, SLASH_COMMANDS
 from channels.registry import register_channel
 from core.session import sessions, _serialize_history
-from config import MODEL, MODEL_POOL, CONTEXT_LIMIT, OWNER_USER_ID
+from config import MODEL, MODEL_POOL, MODEL_REGISTRY, CONTEXT_LIMIT, OWNER_USER_ID
 
 logger = logging.getLogger("channel.desktop")
 
@@ -481,12 +481,17 @@ async def delete_session(session_id: str):
 
 @app.get("/api/models")
 async def list_models():
-    """Get the list of available models and the currently active model."""
+    """Get the list of available models and the currently active model.
+
+    Each model in `available` carries display metadata (name, provider)
+    so the frontend can render icons and group headings without parsing
+    the LiteLLM routing string.
+    """
     current = sessions.get_model(DESKTOP_USER_ID) or MODEL
     return {
         "current": current,
         "default": MODEL,
-        "available": list(MODEL_POOL),
+        "available": list(MODEL_REGISTRY),
     }
 
 
