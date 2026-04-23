@@ -278,9 +278,9 @@ export const Tool = ({ className, onOpenChange, ...props }: ToolProps) => {
   const anchorOnOpenChange = useScrollAnchor();
 
   const handleOpenChange = useCallback(
-    (open: boolean) => {
-      anchorOnOpenChange(open);
-      onOpenChange?.(open);
+    (...args: Parameters<NonNullable<typeof onOpenChange>>) => {
+      anchorOnOpenChange(args[0]);
+      onOpenChange?.(...args);
     },
     [anchorOnOpenChange, onOpenChange]
   );
@@ -396,8 +396,7 @@ export const ToolHeader = ({
           </>
         ) : isLoading ? (
           <Shimmer duration={1}>
-            {getToolDisplayName(derivedName, false)}{" "}
-            {resolvedTitle && resolvedTitle !== derivedName ? resolvedTitle : ""}
+            {`${getToolDisplayName(derivedName, false)} ${resolvedTitle && resolvedTitle !== derivedName ? resolvedTitle : ""}`.trim()}
           </Shimmer>
         ) : (
           <>
