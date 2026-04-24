@@ -92,17 +92,32 @@ FEISHU_ALLOWED_USERS=ou_xxx,ou_yyy
 ```
 
 ### 后台运行（推荐）
+
+**方式一：systemd 服务（推荐）**
+
+使用统一的多渠道服务文件：
+
+```bash
+# 编辑 nono-cowork.service，将 YOUR_USERNAME 替换为你的实际用户名
+# 在 .env 中设置 CHANNELS=feishu（或添加到已有渠道列表中）
+sudo cp nono-cowork.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now nono-cowork
+```
+
+**方式二：screen / tmux**
+
 ```bash
 # 使用 screen
 screen -S feishu-bot
 cd /path/to/nono-cowork
-.venv/bin/python -m src.channels.feishu
+uv run feishu-bot
 # Ctrl+A, D 脱离
 
 # 或使用 tmux
 tmux new -s feishu-bot
 cd /path/to/nono-cowork
-.venv/bin/python -m src.channels.feishu
+uv run feishu-bot
 # Ctrl+B, D 脱离
 ```
 

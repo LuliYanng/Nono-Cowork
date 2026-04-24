@@ -4,9 +4,10 @@
 # Configure CHANNELS in .env to control which channels are active.
 #
 # Setup:
-#   1. sudo cp nono-cowork.service /etc/systemd/system/
-#   2. sudo systemctl daemon-reload
-#   3. sudo systemctl enable --now nono-cowork
+#   1. Edit this file: replace YOUR_USERNAME and project path below
+#   2. sudo cp nono-cowork.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now nono-cowork
 #
 # Manage:
 #   sudo systemctl status nono-cowork        # check status
@@ -19,18 +20,16 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/root/Nono-Cowork
-# Kill any stale process occupying port 8080 before starting
-ExecStartPre=/bin/bash -c 'PID=$(ss -tlnp sport = :8080 | grep -oP "pid=\K[0-9]+" | head -1); [ -n "$PID" ] && kill -9 $PID && sleep 1 || true'
-ExecStart=/root/.local/bin/uv run nono-cowork
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/nono-cowork
+ExecStart=/home/YOUR_USERNAME/.local/bin/uv run nono-cowork
 Restart=always
 RestartSec=5
 # Ensure all child processes are killed on stop (not just main PID)
 KillMode=mixed
 TimeoutStopSec=10
 Environment=PYTHONUNBUFFERED=1
-Environment=HOME=/root
+Environment=HOME=/home/YOUR_USERNAME
 
 [Install]
 WantedBy=multi-user.target

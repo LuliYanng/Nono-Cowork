@@ -1,86 +1,79 @@
 # Desktop App Setup Guide
 
-The Nono CoWork desktop app connects to your VPS backend and provides a full-featured UI for chatting with the agent, managing automations, reviewing notifications, and monitoring file sync status.
+The Nono CoWork desktop app connects to your VPS backend and provides a full UI: chat with the agent, manage automations, review notifications, and monitor file sync.
 
 ## Prerequisites
 
-- A running Nono CoWork backend ([Quick Start](../README.md#quick-start))
+- A running Nono CoWork backend on your VPS ([Quick Start](../README.md#quick-start))
 - Your VPS address and API token (from `.env`)
 
-## 1. Install & Run (Development)
+## Install
+
+### Option A: Download Release (Recommended)
+
+> 🚧 Pre-built releases are coming soon. For now, use Option B below.
+
+<!-- Download from [GitHub Releases](https://github.com/KilYep/nono-cowork/releases) when available. -->
+
+### Option B: Build from Source
+
+Requires [Node.js](https://nodejs.org/) ≥ 18.
 
 ```bash
 cd desktop
 npm install
-npm run electron:dev
+npm run package
 ```
 
-## 2. Connect to Your VPS
+The installer will be in `desktop/release/`. Run it to install.
 
-On first launch, click **Settings** (bottom of the sidebar) and enter:
+> For development, use `npm run electron:dev` instead — see [desktop/README.md](../desktop/README.md) for details.
 
-- **Server Address** — Your VPS URL (e.g., `http://your-vps-ip:8080`)
-- **Access Token** — The `API_TOKEN` value from your VPS `.env` file
+## Connect to Your VPS
 
-Click **Test Connection** to verify, then **Save & Reconnect**.
+On first launch:
+
+1. Click **Settings** in the sidebar
+2. Enter your **Server Address** (e.g., `http://your-vps-ip:8080`)
+3. Enter the **Access Token** — the `DESKTOP_API_TOKEN` value from your VPS `.env` file
+4. Click **Test Connection** → **Save & Reconnect**
 
 > 💡 The config is saved locally. You only need to do this once.
 
-## 3. File Sync (Automatic Pairing)
+## File Sync
 
-If [Syncthing is running](syncthing_setup.md) on both your VPS and local machine, the desktop app will automatically pair them using the API connection — **no manual Device ID exchange needed**.
+The desktop app integrates with [Syncthing](syncthing_setup.md) for automatic file synchronization between your VPS and local machine.
 
-### Windows embedded Syncthing (built-in runtime)
+### Automatic Pairing
 
-On Windows, the desktop app can run a managed Syncthing process directly (no separate SyncTrayzor install required), when `syncthing.exe` is bundled with the app.
+If Syncthing is running on both your VPS and local machine, the desktop app automatically exchanges Device IDs on connection — **no manual pairing needed**.
 
-For local packaging, prepare the binary first:
+### Windows Embedded Syncthing
+
+On Windows, the desktop app includes a built-in Syncthing runtime. No separate Syncthing installation required.
+
+For development or self-built packages, prepare the binary first:
 
 ```bash
 cd desktop
 npm run syncthing:prepare:win
 ```
 
-The binary is copied into `electron/vendor/syncthing/windows-amd64/` and included by `electron-builder` as an app resource.
+### Sync Status
 
-> License note: Syncthing is MPL-2.0. Keep the upstream license text in your distribution package.
+The indicator at the bottom of the sidebar shows:
 
-The sync status indicator at the bottom of the sidebar shows:
-
-| Status | Meaning |
+| Icon | Status |
 |:---|:---|
 | 🟢 Synced | Connected and up-to-date |
 | 🔵 Syncing... | File transfer in progress |
 | ⬜ Disconnected | Local Syncthing not running or VPS unreachable |
 
-### What gets auto-paired?
+## Features
 
-When the desktop app calls `POST /api/sync/pair`:
-1. Your local Syncthing Device ID is sent to the VPS
-2. The VPS adds your device as trusted and shares all configured folders
-3. The VPS Device ID is returned so your local Syncthing can connect back
-4. P2P encrypted sync begins automatically
-
-### Still need manual Syncthing setup?
-
-The auto-pairing handles device exchange, but you still need:
-- **Syncthing installed** on both your local machine and VPS ([guide](syncthing_setup.md))
-- **A shared folder** configured on the VPS side
-
-## 4. Features Overview
-
-### Chat
-Full conversational interface with the agent. Supports streaming responses, model switching, code blocks, and file deliverables.
-
-### Workspace
-Notification center for agent-initiated tasks. Review email drafts, file reports, and other deliverables. Approve or dismiss with one click.
-
-### Routines
-Manage automated workflows:
-- **Cron schedules** — Time-based recurring tasks
-- **Event triggers** — React to emails, app events, etc.
-- **File watchers** — Process files dropped into sync folders
-
-### Settings
-- Server connection configuration
-- Real-time sync status monitoring
+| Feature | Description |
+|:---|:---|
+| **Chat** | Conversational interface with streaming responses, model switching, and code blocks |
+| **Workspace** | Notification center — review agent deliverables (email drafts, reports), approve or dismiss |
+| **Routines** | Manage cron schedules, event triggers, and file watchers |
+| **Settings** | Server connection, sync status, model selection |

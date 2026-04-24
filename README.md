@@ -92,13 +92,16 @@ AI agents can already do a lot. But most still fall into the same trade-offs:
 
 ## Quick Start
 
-**Requirements:** A Linux VPS · Python ≥ 3.12 · [uv](https://docs.astral.sh/uv/)
+**Requirements:** A Linux VPS · Python ≥ 3.12 · [uv](https://docs.astral.sh/uv/) · [OpenRouter API key](https://openrouter.ai/)
 
 ```bash
+# Install uv (if not installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 git clone https://github.com/KilYep/nono-cowork.git
 cd nono-cowork
 uv sync
-cp .env.example .env   # Edit with your LLM API key
+cp .env.example .env   # Fill in your OPENROUTER_API_KEY
 ```
 
 ```bash
@@ -115,13 +118,26 @@ uv run desktop-agent    # Desktop API only
 For long-running deployment, install the included systemd service:
 
 ```bash
+# Edit nono-cowork.service first: replace YOUR_USERNAME with your actual username
 sudo cp nono-cowork.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl enable --now nono-cowork
 ```
 
-> 💡 Works with major LLMs via [LiteLLM](https://github.com/BerriAI/litellm) — Qwen, Gemini, Claude, DeepSeek, GPT, and more. Change one setting in `.env`.
+> 💡 One API key, all models. [OpenRouter](https://openrouter.ai/) routes to Claude, GPT, Gemini, DeepSeek, Qwen, and more — switch models with one line in `.env`.
 
-> **Minimal test (no Syncthing or Composio required):** Set an API key in `.env` and run `uv run agent`. You'll have a working agent in the terminal in under 2 minutes. Add Syncthing for file sync and Composio for app triggers when you're ready.
+> **Minimal test (no Syncthing or Composio required):** Set `OPENROUTER_API_KEY` in `.env` and run `uv run agent`. You'll have a working agent in the terminal in under 2 minutes. Add Syncthing for file sync and Composio for app triggers when you're ready.
+
+### Firewall / Ports
+
+If your VPS uses a firewall, open the ports for the channels you plan to use:
+
+```bash
+sudo ufw allow 8080/tcp    # Desktop API (required for desktop app)
+sudo ufw allow 22000/tcp   # Syncthing file sync
+sudo ufw allow 21027/udp   # Syncthing discovery
+sudo ufw allow 9090/tcp    # Composio webhook (only if using event triggers)
+```
 
 ---
 
@@ -134,6 +150,7 @@ sudo systemctl enable --now nono-cowork
 | Telegram Bot | [docs/telegram_setup.md](docs/telegram_setup.md) |
 | Feishu (Lark) Bot | [docs/feishu_setup.md](docs/feishu_setup.md) |
 | Composio (App Integrations) | [docs/composio_setup.md](docs/composio_setup.md) |
+| Firewall / Ports | See [Quick Start](#quick-start) above |
 
 ---
 
@@ -187,7 +204,7 @@ sudo systemctl enable --now nono-cowork
 
 | Component | Technology |
 |:---|:---|
-| LLM Interface | [LiteLLM](https://github.com/BerriAI/litellm) — unified multi-LLM API |
+| LLM Gateway | [OpenRouter](https://openrouter.ai/) — unified access to all major LLMs |
 | File Sync | [Syncthing](https://syncthing.net/) — encrypted peer-to-peer sync |
 | App Integrations | [Composio](https://composio.dev) — OAuth-based 1,000+ app connectors |
 | Scheduling | [APScheduler](https://github.com/agronholm/apscheduler) — cron-based task engine |

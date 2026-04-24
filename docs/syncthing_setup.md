@@ -44,6 +44,19 @@ systemctl --user start syncthing
 systemctl --user status syncthing
 ```
 
+> ⚠️ **Running as root?** `systemctl --user` does not work for the root user by default. Use the system-wide service instead:
+> ```bash
+> sudo systemctl enable syncthing@root
+> sudo systemctl start syncthing@root
+> ```
+
+### Open Firewall Ports
+
+```bash
+sudo ufw allow 22000/tcp   # Syncthing file sync
+sudo ufw allow 21027/udp   # Syncthing discovery protocol
+```
+
 ### Remote Access to Web UI (Optional)
 
 By default, Syncthing Web UI only listens on `127.0.0.1:8384`. To access it from your local browser:
@@ -61,8 +74,9 @@ ssh -L 8384:localhost:8384 your-user@your-vps-ip
 
 ## 2. Install Syncthing on Your Local Machine
 
+- **Windows (with Desktop App)**: The Nono CoWork desktop app can embed Syncthing — no separate install needed. See [Desktop App Setup](desktop_setup.md).
+- **Windows (standalone)**: Download [SyncTrayzor](https://github.com/canton7/SyncTrayzor/releases) (Syncthing with a system tray icon)
 - **macOS**: `brew install syncthing` or download from [syncthing.net](https://syncthing.net/)
-- **Windows**: Download [SyncTrayzor](https://github.com/canton7/SyncTrayzor/releases) (Syncthing with a system tray icon)
 - **Linux**: Same as VPS installation above
 
 After starting, open the Web UI at http://localhost:8384.

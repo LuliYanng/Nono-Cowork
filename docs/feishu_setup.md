@@ -92,17 +92,32 @@ FEISHU_ALLOWED_USERS=ou_xxx,ou_yyy
 ```
 
 ### Run in Background (Recommended)
+
+**Option 1: systemd service (recommended)**
+
+Use the unified multi-channel service file:
+
+```bash
+# Edit nono-cowork.service: replace YOUR_USERNAME with your actual username
+# Set CHANNELS=feishu in .env (or add feishu to existing channels)
+sudo cp nono-cowork.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now nono-cowork
+```
+
+**Option 2: screen / tmux**
+
 ```bash
 # Using screen
 screen -S feishu-bot
 cd /path/to/nono-cowork
-.venv/bin/python -m src.channels.feishu
+uv run feishu-bot
 # Ctrl+A, D to detach
 
 # Or using tmux
 tmux new -s feishu-bot
 cd /path/to/nono-cowork
-.venv/bin/python -m src.channels.feishu
+uv run feishu-bot
 # Ctrl+B, D to detach
 ```
 

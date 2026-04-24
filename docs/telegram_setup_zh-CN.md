@@ -56,15 +56,16 @@ cd /path/to/nono-cowork
 # Ctrl+A, D 脱离
 ```
 
-### 方式二：systemd 服务
+### 方式二：systemd 服务（推荐）
+
+使用统一的多渠道服务文件：
 
 ```bash
-# 创建服务文件
-sudo cp telegram-bot.service /etc/systemd/system/
-# 编辑修改路径和用户名
+# 编辑 nono-cowork.service，将 YOUR_USERNAME 替换为你的实际用户名
+# 在 .env 中设置 CHANNELS=telegram（或添加到已有渠道列表中）
+sudo cp nono-cowork.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable telegram-bot
-sudo systemctl start telegram-bot
+sudo systemctl enable --now nono-cowork
 ```
 
 ## 5. 使用方法

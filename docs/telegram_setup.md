@@ -56,15 +56,16 @@ cd /path/to/nono-cowork
 # Ctrl+A, D to detach
 ```
 
-### Option 2: systemd service
+### Option 2: systemd service (recommended)
+
+Use the unified multi-channel service file:
 
 ```bash
-# Create service file
-sudo cp telegram-bot.service /etc/systemd/system/
-# Edit to update paths and username
+# Edit nono-cowork.service: replace YOUR_USERNAME with your actual username
+# Set CHANNELS=telegram in .env (or add telegram to existing channels)
+sudo cp nono-cowork.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable telegram-bot
-sudo systemctl start telegram-bot
+sudo systemctl enable --now nono-cowork
 ```
 
 ## 5. Usage

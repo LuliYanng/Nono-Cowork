@@ -44,6 +44,19 @@ systemctl --user start syncthing
 systemctl --user status syncthing
 ```
 
+> ⚠️ **使用 root 用户？** `systemctl --user` 对 root 用户默认不可用。请改用系统级服务：
+> ```bash
+> sudo systemctl enable syncthing@root
+> sudo systemctl start syncthing@root
+> ```
+
+### 开放防火墙端口
+
+```bash
+sudo ufw allow 22000/tcp   # Syncthing 文件同步
+sudo ufw allow 21027/udp   # Syncthing 发现协议
+```
+
 ### 远程访问 Web UI（可选）
 
 默认情况下 Syncthing Web UI 只监听 `127.0.0.1:8384`。要从本地浏览器访问：
@@ -61,13 +74,18 @@ ssh -L 8384:localhost:8384 你的用户名@你的VPS-IP
 
 ## 2. 在你的本地电脑上安装 Syncthing
 
+- **Windows（使用桌面端）**：Nono CoWork 桌面端可内嵌 Syncthing——不需要额外安装。详见[桌面端配置](desktop_setup_zh-CN.md)。
+- **Windows（独立安装）**：下载 [SyncTrayzor](https://github.com/canton7/SyncTrayzor/releases)（带系统托盘图标的 Syncthing）
 - **macOS**：`brew install syncthing` 或从 [syncthing.net](https://syncthing.net/) 下载
-- **Windows**：下载 [SyncTrayzor](https://github.com/canton7/SyncTrayzor/releases)（带系统托盘图标的 Syncthing）
 - **Linux**：与 VPS 安装方式相同
 
 启动后，在浏览器打开 http://localhost:8384 进入 Web UI。
 
 ## 3. 配对设备
+
+> 💡 **使用桌面端？** 可以跳过这一步。桌面端会在「Settings → Save & Reconnect」时自动与 VPS 交换 Device ID。详见[桌面端配置](desktop_setup_zh-CN.md#文件同步自动配对)。
+
+### 手动配对（不使用桌面端）：
 
 1. **获取 VPS 设备 ID**：在 VPS 的 Web UI → 右上角「操作」→「显示 ID」
 
