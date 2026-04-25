@@ -115,6 +115,7 @@ def update_token_stats(token_stats: dict, usage, cache_info: dict) -> None:
     token_stats["total_completion_tokens"] += usage.completion_tokens or 0
     token_stats["total_tokens"] += usage.total_tokens or 0
     token_stats["total_cached_tokens"] += cache_info.get("cached_tokens", 0)
+    token_stats.setdefault("total_cache_write_tokens", 0)
     token_stats["total_cache_write_tokens"] += cache_info.get("cache_creation_tokens", 0)
     token_stats["total_api_calls"] += 1
     # Track last call's prompt tokens = current context size
