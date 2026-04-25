@@ -51,6 +51,14 @@ COMPRESSION_MODEL = "openrouter/minimax/minimax-m2.7"  # Cheap model for generat
 TOOL_OUTPUT_MAX_CHARS = 3000        # Max chars per tool output before spilling to file
 TOOL_OUTPUT_PREVIEW_CHARS = 800     # Chars to show as preview when output is spilled
 
+# ── Dream (nightly reflection) ──
+# Phase 1 scans many user queries → cluster into recurring patterns. High volume,
+# low difficulty → use a cheap model.
+# Phase 2 reads slimmed full conversations and writes a SKILL.md draft. Lower
+# volume, demands good structured-writing → use a stronger model.
+DREAM_PHASE1_MODEL = os.getenv("DREAM_PHASE1_MODEL", "openrouter/minimax/minimax-m2.7")
+DREAM_PHASE2_MODEL = os.getenv("DREAM_PHASE2_MODEL", "openrouter/anthropic/claude-sonnet-4.6")
+
 # ── Memory ──
 MEMORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "memory.md")
 MEMORY_MAX_INJECT_CHARS = 2000      # Max chars of memory to inject into system prompt

@@ -5,6 +5,9 @@ Usage (from repo root):
     python -m dream.dreamer --days 3 --user owner
     python -m dream.dreamer --days 7                 # all users
     python -m dream.dreamer --dry-run                # don't write candidates
+    python -m dream.dreamer --phase1-only            # only cluster, no Phase 2
+    python -m dream.dreamer --phase2-model openrouter/anthropic/claude-sonnet-4.6
+    python -m dream.dreamer --model openrouter/openai/gpt-5.4-mini   # both phases
 
 What it does:
     1. Load user queries from the last --days days of sessions.
@@ -32,7 +35,7 @@ _SRC_DIR = Path(__file__).resolve().parent.parent
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from config import COMPRESSION_MODEL, SESSIONS_DIR  # noqa: E402
+from config import DREAM_PHASE1_MODEL, DREAM_PHASE2_MODEL, SESSIONS_DIR  # noqa: E402
 from core.llm import call_llm  # noqa: E402
 
 from dream.prompts import (  # noqa: E402
@@ -77,13 +80,14 @@ def _extract_json_block(text: str):
         return None
 
 
-def _run_llm(system: str, user: str, model: str | None = None) -> str:
+def _run_llm(system: str, user: str, model: str) -> str:
     """One-shot LLM call — system + user, no tools, no streaming."""
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    completion = call_llm(messages, model=model or COMPRESSION_MODEL, tools=None)
+    logger.debug("LLM call → model=%s", model)
+    completion = call_llm(messages, model=model, tools=None)
     return completion.choices[0].message.content or ""
 
 
@@ -94,8 +98,9 @@ def phase1_cluster(queries: list[QueryRecord], model: str | None = None) -> list
     if not queries:
         return []
     user_msg = format_phase1_user(queries)
-    logger.info("Phase 1: %d queries → dreamer", len(queries))
-    reply = _run_llm(PHASE1_SYSTEM, user_msg, model=model)
+    chosen = model or DREAM_PHASE1_MODEL
+    logger.info("Phase 1: %d queries → dreamer (model=%s)", len(queries), chosen)
+    reply = _run_llm(PHASE1_SYSTEM, user_msg, model=chosen)
     parsed = _extract_json_block(reply)
     if not isinstance(parsed, list):
         logger.warning("Phase 1 returned non-list JSON: %r", type(parsed).__name__)
@@ -145,7 +150,9 @@ def phase2_distill(pattern: dict, model: str | None = None) -> dict | None:
         return None
 
     user_msg = format_phase2_user(pattern, slim_sessions)
-    reply = _run_llm(PHASE2_SYSTEM, user_msg, model=model)
+    chosen = model or DREAM_PHASE2_MODEL
+    logger.info("Phase 2: %s → dreamer (model=%s)", pattern.get("pattern_name"), chosen)
+    reply = _run_llm(PHASE2_SYSTEM, user_msg, model=chosen)
     parsed = _extract_json_block(reply)
     if not isinstance(parsed, dict):
         logger.warning("Phase 2 returned non-dict JSON for %s", pattern.get("pattern_name"))
@@ -194,7 +201,8 @@ def run_dream(
     user_id: str | None = None,
     dry_run: bool = False,
     phase1_only: bool = False,
-    model: str | None = None,
+    phase1_model: str | None = None,
+    phase2_model: str | None = None,
 ) -> dict:
     """Run one dream pass. Returns a summary dict for logging/debugging."""
     queries = list(iter_recent_queries(days=days, user_id=user_id))
@@ -210,7 +218,7 @@ def run_dream(
         logger.info("No queries in the last %d days; nothing to dream about.", days)
         return summary
 
-    clusters = phase1_cluster(queries, model=model)
+    clusters = phase1_cluster(queries, model=phase1_model)
     summary["patterns"] = clusters
 
     if phase1_only:
@@ -218,7 +226,7 @@ def run_dream(
         return summary
 
     for pattern in clusters:
-        result = phase2_distill(pattern, model=model)
+        result = phase2_distill(pattern, model=phase2_model)
         if result is None:
             continue
         pattern["phase2_result"] = {
@@ -244,7 +252,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--user", default=None, help="Filter by user_id (default: all users).")
     p.add_argument("--dry-run", action="store_true", help="Run both phases, but don't write candidates.")
     p.add_argument("--phase1-only", action="store_true", help="Stop after Phase 1 (only inspect cluster output, no Phase 2 LLM calls).")
-    p.add_argument("--model", default=None, help="Override model (default: COMPRESSION_MODEL).")
+    p.add_argument("--phase1-model", default=None, help="Override Phase 1 model (default: config.DREAM_PHASE1_MODEL).")
+    p.add_argument("--phase2-model", default=None, help="Override Phase 2 model (default: config.DREAM_PHASE2_MODEL).")
+    p.add_argument("--model", default=None, help="Shortcut: override BOTH phases with one model.")
     p.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging.")
     return p
 
@@ -256,12 +266,16 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s — %(message)s",
     )
     logger.info("Dreamer starting — sessions_dir=%s days=%d", SESSIONS_DIR, args.days)
+    # --model is a shortcut that pins both phases to the same model.
+    p1_model = args.phase1_model or args.model
+    p2_model = args.phase2_model or args.model
     summary = run_dream(
         days=args.days,
         user_id=args.user,
         dry_run=args.dry_run,
         phase1_only=args.phase1_only,
-        model=args.model,
+        phase1_model=p1_model,
+        phase2_model=p2_model,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
     return 0
