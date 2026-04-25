@@ -24,6 +24,14 @@ from context.spill import spill_tool_output
 from context.compressor import compress_history, needs_compression
 
 
+def _usage_field(usage, name: str, default=0):
+    if usage is None:
+        return default
+    if isinstance(usage, dict):
+        return usage.get(name, default)
+    return getattr(usage, name, default)
+
+
 # ── History sanitization ──────────────────────────────────────────────────────
 
 def _sanitize_history(history: list) -> list:
@@ -106,7 +114,7 @@ def _print_tool_result(result: str, max_len: int = 500):
 def _print_context_bar(usage):
     if not usage:
         return
-    prompt_tokens = usage.prompt_tokens or 0
+    prompt_tokens = _usage_field(usage, "prompt_tokens", 0) or 0
     pct = min(prompt_tokens / CONTEXT_LIMIT * 100, 100)
 
     if pct < 50:
@@ -144,7 +152,7 @@ def format_usage_summary(token_stats: dict, usage=None) -> str:
     parts.append(f"| {calls} calls")
 
     if usage:
-        prompt_tokens = usage.prompt_tokens or 0
+        prompt_tokens = _usage_field(usage, "prompt_tokens", 0) or 0
         pct = min(prompt_tokens / CONTEXT_LIMIT * 100, 100)
         parts.append(f"| context {pct:.0f}%")
 
@@ -476,7 +484,7 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
             cache_info = extract_cache_info(usage) if usage else {}
             if usage:
                 update_token_stats(token_stats, usage, cache_info)
-                last_prompt_tokens = usage.prompt_tokens or 0
+                last_prompt_tokens = _usage_field(usage, "prompt_tokens", 0) or 0
 
             log_event(log_file, {
                 "type": "llm_response", "round": round_num, "model": active_model,
@@ -498,7 +506,7 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
                         "type": "usage_report",
                         "summary": format_usage_summary(token_stats, usage),
                         "token_stats": dict(token_stats),
-                        "prompt_tokens": usage.prompt_tokens or 0 if usage else 0,
+                        "prompt_tokens": _usage_field(usage, "prompt_tokens", 0) or 0,
                         "round": round_num,
                     })
                 break

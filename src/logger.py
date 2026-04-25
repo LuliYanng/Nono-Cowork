@@ -144,16 +144,28 @@ def serialize_usage(usage) -> dict:
     """Serialize a usage object."""
     if usage is None:
         return {}
+
+    def read_field(obj, name: str, default=0):
+        if obj is None:
+            return default
+        if isinstance(obj, dict):
+            return obj.get(name, default)
+        return getattr(obj, name, default)
+
     result = {
-        "prompt_tokens": usage.prompt_tokens,
-        "completion_tokens": usage.completion_tokens,
-        "total_tokens": usage.total_tokens,
+        "prompt_tokens": read_field(usage, "prompt_tokens", 0),
+        "completion_tokens": read_field(usage, "completion_tokens", 0),
+        "total_tokens": read_field(usage, "total_tokens", 0),
     }
     # Cache-related fields
-    prompt_details = getattr(usage, "prompt_tokens_details", None)
+    prompt_details = read_field(usage, "prompt_tokens_details", None)
     if prompt_details:
         result["prompt_tokens_details"] = {
-            "cached_tokens": getattr(prompt_details, "cached_tokens", 0) or 0,
-            "cache_creation_input_tokens": getattr(prompt_details, "cache_creation_input_tokens", 0) or 0,
+            "cached_tokens": read_field(prompt_details, "cached_tokens", 0) or 0,
+            "cache_creation_input_tokens": (
+                read_field(prompt_details, "cache_creation_input_tokens", 0)
+                or read_field(prompt_details, "cache_write_tokens", 0)
+                or 0
+            ),
         }
     return result

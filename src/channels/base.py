@@ -53,7 +53,7 @@ def _cmd_status(channel, user_id: str, args: str):
         channel.send_status(user_id, "ℹ️ No active session. Send a message to start one.")
         return
 
-    stats = info["token_stats"]
+    stats = info.get("token_stats") or {}
     model = info["model_override"] or MODEL
     elapsed = time.time() - info["created_at"]
     mins = int(elapsed // 60)
@@ -74,14 +74,14 @@ def _cmd_status(channel, user_id: str, args: str):
         f"🤖 Model: `{model}`",
         f"⏱️ Duration: {mins}m",
         f"💬 Messages: {info['history_len']}",
-        f"📡 API calls: {stats['total_api_calls']}",
+        f"📡 API calls: {stats.get('total_api_calls', 0)}",
         "",
         f"⟨{bar}⟩ {pct:.0f}%  context: {fmt(pt)} / {fmt(CONTEXT_LIMIT)}",
-        f"Total consumed: {fmt(stats['total_tokens'])}  "
-        f"(prompt: {fmt(stats['total_prompt_tokens'])} + completion: {fmt(stats['total_completion_tokens'])})",
+        f"Total consumed: {fmt(stats.get('total_tokens', 0))}  "
+        f"(prompt: {fmt(stats.get('total_prompt_tokens', 0))} + completion: {fmt(stats.get('total_completion_tokens', 0))})",
     ]
-    if stats["total_cached_tokens"]:
-        lines.append(f"Cached: {fmt(stats['total_cached_tokens'])}")
+    if stats.get("total_cached_tokens", 0):
+        lines.append(f"Cached: {fmt(stats.get('total_cached_tokens', 0))}")
     if info["is_running"]:
         lines.append("\n🔄 Agent is currently running...")
 

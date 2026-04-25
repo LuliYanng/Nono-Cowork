@@ -449,10 +449,11 @@ class SessionManager:
             session = self._sessions.get(user_id)
             if not session:
                 return None
+            token_stats = {**make_empty_token_stats(), **(session.get("token_stats") or {})}
             return {
                 "session_id": session["session_id"],
                 "workspace_id": session.get("workspace_id"),
-                "token_stats": dict(session["token_stats"]),
+                "token_stats": token_stats,
                 "history_len": len(session["history"]),
                 "created_at": session["created_at"],
                 "last_active": session["last_active"],

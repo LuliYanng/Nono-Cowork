@@ -235,7 +235,7 @@ async def status():
     if not info:
         return {"active": False}
 
-    stats = info["token_stats"]
+    stats = info.get("token_stats") or {}
     pt = stats.get("last_prompt_tokens", 0)
     pct = min(pt / CONTEXT_LIMIT * 100, 100) if CONTEXT_LIMIT else 0
 
@@ -243,14 +243,14 @@ async def status():
         "active": True,
         "model": info.get("model_override") or MODEL,
         "history_len": info["history_len"],
-        "api_calls": stats["total_api_calls"],
+        "api_calls": stats.get("total_api_calls", 0),
         "context_pct": round(pct, 1),
         "prompt_tokens": pt,
         "context_limit": CONTEXT_LIMIT,
-        "total_tokens": stats["total_tokens"],
-        "total_prompt_tokens": stats["total_prompt_tokens"],
-        "total_completion_tokens": stats["total_completion_tokens"],
-        "total_cached_tokens": stats["total_cached_tokens"],
+        "total_tokens": stats.get("total_tokens", 0),
+        "total_prompt_tokens": stats.get("total_prompt_tokens", 0),
+        "total_completion_tokens": stats.get("total_completion_tokens", 0),
+        "total_cached_tokens": stats.get("total_cached_tokens", 0),
         "total_cache_write_tokens": stats.get("total_cache_write_tokens", 0),
         "is_running": info["is_running"],
     }

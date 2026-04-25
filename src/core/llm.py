@@ -10,6 +10,32 @@ from config import MODEL, API_BASE, API_KEY
 warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
 
 
+def _read_field(obj, name: str, default=0):
+    """Read a field from either a LiteLLM object or a dict-like response."""
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+def _drop_null_strict(value):
+    """Remove function.strict=None from tool schemas before provider validation.
+
+    Some OpenRouter routes validate OpenAI tool schemas strictly and reject
+    ``strict: null``. Omitting the field preserves the default behavior.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _drop_null_strict(item)
+            for key, item in value.items()
+            if not (key == "strict" and item is None)
+        }
+    if isinstance(value, list):
+        return [_drop_null_strict(item) for item in value]
+    return value
+
+
 def _build_llm_kwargs(messages: list, model: str = None, tools: list = None) -> dict:
     """Build shared kwargs for LiteLLM calls (used by both stream and non-stream)."""
     model = model or MODEL
@@ -21,7 +47,7 @@ def _build_llm_kwargs(messages: list, model: str = None, tools: list = None) -> 
         "drop_params": True,  # Auto-drop params unsupported by target model
     }
     if tools:
-        kwargs["tools"] = tools
+        kwargs["tools"] = _drop_null_strict(tools)
         kwargs["tool_choice"] = "auto"
 
     # Determine provider prefix (e.g. "gemini", "anthropic", "deepseek")
@@ -96,12 +122,12 @@ def extract_cache_info(usage) -> dict:
     and OpenRouter's normalized names (cache_write_tokens).
     """
     cache_info = {}
-    prompt_details = getattr(usage, "prompt_tokens_details", None)
+    prompt_details = _read_field(usage, "prompt_tokens_details", None)
     if prompt_details:
-        cache_info["cached_tokens"] = getattr(prompt_details, "cached_tokens", 0) or 0
+        cache_info["cached_tokens"] = _read_field(prompt_details, "cached_tokens", 0) or 0
         cache_info["cache_creation_tokens"] = (
-            getattr(prompt_details, "cache_creation_input_tokens", 0)
-            or getattr(prompt_details, "cache_write_tokens", 0)
+            _read_field(prompt_details, "cache_creation_input_tokens", 0)
+            or _read_field(prompt_details, "cache_write_tokens", 0)
             or 0
         )
     return cache_info
@@ -111,15 +137,20 @@ def update_token_stats(token_stats: dict, usage, cache_info: dict) -> None:
     """Accumulate token usage into a running stats dict (mutates in place)."""
     if not usage:
         return
-    token_stats["total_prompt_tokens"] += usage.prompt_tokens or 0
-    token_stats["total_completion_tokens"] += usage.completion_tokens or 0
-    token_stats["total_tokens"] += usage.total_tokens or 0
+    token_stats.setdefault("total_prompt_tokens", 0)
+    token_stats.setdefault("total_completion_tokens", 0)
+    token_stats.setdefault("total_tokens", 0)
+    token_stats.setdefault("total_cached_tokens", 0)
+    token_stats.setdefault("total_api_calls", 0)
+    token_stats["total_prompt_tokens"] += _read_field(usage, "prompt_tokens", 0) or 0
+    token_stats["total_completion_tokens"] += _read_field(usage, "completion_tokens", 0) or 0
+    token_stats["total_tokens"] += _read_field(usage, "total_tokens", 0) or 0
     token_stats["total_cached_tokens"] += cache_info.get("cached_tokens", 0)
     token_stats.setdefault("total_cache_write_tokens", 0)
     token_stats["total_cache_write_tokens"] += cache_info.get("cache_creation_tokens", 0)
     token_stats["total_api_calls"] += 1
     # Track last call's prompt tokens = current context size
-    token_stats["last_prompt_tokens"] = usage.prompt_tokens or 0
+    token_stats["last_prompt_tokens"] = _read_field(usage, "prompt_tokens", 0) or 0
 
 
 def make_empty_token_stats() -> dict:
