@@ -39,9 +39,8 @@ if API_BASE and "/" not in MODEL:
 MAX_ROUNDS = 30
 CONTEXT_LIMIT = 200_000  # Context window limit (used for usage percentage display)
 
-# ── Prompt caching ──
-# Providers that support cache_control
-CACHE_CONTROL_PROVIDERS = {"dashscope/", "anthropic/"}
+
+
 
 # ── Context Compression ──
 COMPRESSION_THRESHOLD = 0.7         # Trigger compression when context usage exceeds this ratio

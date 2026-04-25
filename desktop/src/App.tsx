@@ -366,6 +366,7 @@ interface SessionStatus {
   total_prompt_tokens?: number;
   total_completion_tokens?: number;
   total_cached_tokens?: number;
+  total_cache_write_tokens?: number;
   is_running?: boolean;
 }
 
@@ -2179,7 +2180,7 @@ function App() {
                               outputTokens: sessionStatus.total_completion_tokens ?? 0,
                               totalTokens: sessionStatus.total_tokens ?? 0,
                               cachedInputTokens: sessionStatus.total_cached_tokens ?? 0,
-                              inputTokenDetails: { cacheReadTokens: sessionStatus.total_cached_tokens ?? 0, noCacheTokens: undefined, cacheWriteTokens: undefined },
+                              inputTokenDetails: { cacheReadTokens: sessionStatus.total_cached_tokens ?? 0, noCacheTokens: undefined, cacheWriteTokens: sessionStatus.total_cache_write_tokens ?? 0 },
                               outputTokenDetails: { textTokens: undefined, reasoningTokens: undefined },
                             }}
                           >

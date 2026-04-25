@@ -376,34 +376,59 @@ export const ContextCacheUsage = ({
   ...props
 }: ContextCacheUsageProps) => {
   const { usage, modelId } = useContextValue();
-  const cacheTokens = usage?.cachedInputTokens ?? 0;
+  const cacheReadTokens = usage?.cachedInputTokens ?? 0;
+  const cacheWriteTokens =
+    (usage as { inputTokenDetails?: { cacheWriteTokens?: number } })
+      ?.inputTokenDetails?.cacheWriteTokens ?? 0;
 
   if (children) {
     return children;
   }
 
-  if (!cacheTokens) {
+  if (!cacheReadTokens && !cacheWriteTokens) {
     return null;
   }
 
-  const cacheCost = modelId
+  const readCost = modelId && cacheReadTokens
     ? getUsage({
         modelId,
-        usage: { cacheReads: cacheTokens, input: 0, output: 0 },
+        usage: { cacheReads: cacheReadTokens, input: 0, output: 0 },
       }).costUSD?.totalUSD
     : undefined;
-  const cacheCostText = new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    style: "currency",
-  }).format(cacheCost ?? 0);
+  const readCostText = readCost !== undefined
+    ? new Intl.NumberFormat("en-US", { currency: "USD", style: "currency" }).format(readCost)
+    : undefined;
+
+  const writeCost = modelId && cacheWriteTokens
+    ? getUsage({
+        modelId,
+        usage: { cacheWrites: cacheWriteTokens, input: 0, output: 0 },
+      }).costUSD?.totalUSD
+    : undefined;
+  const writeCostText = writeCost !== undefined
+    ? new Intl.NumberFormat("en-US", { currency: "USD", style: "currency" }).format(writeCost)
+    : undefined;
 
   return (
-    <div
-      className={cn("flex items-center justify-between text-xs", className)}
-      {...props}
-    >
-      <span className="text-muted-foreground">Cache</span>
-      <TokensWithCost costText={cacheCostText} tokens={cacheTokens} />
-    </div>
+    <>
+      {cacheReadTokens > 0 && (
+        <div
+          className={cn("flex items-center justify-between text-xs", className)}
+          {...props}
+        >
+          <span className="text-muted-foreground">Cache read</span>
+          <TokensWithCost costText={readCostText} tokens={cacheReadTokens} />
+        </div>
+      )}
+      {cacheWriteTokens > 0 && (
+        <div
+          className={cn("flex items-center justify-between text-xs", className)}
+          {...props}
+        >
+          <span className="text-muted-foreground">Cache write</span>
+          <TokensWithCost costText={writeCostText} tokens={cacheWriteTokens} />
+        </div>
+      )}
+    </>
   );
 };

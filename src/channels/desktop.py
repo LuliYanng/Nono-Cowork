@@ -251,6 +251,7 @@ async def status():
         "total_prompt_tokens": stats["total_prompt_tokens"],
         "total_completion_tokens": stats["total_completion_tokens"],
         "total_cached_tokens": stats["total_cached_tokens"],
+        "total_cache_write_tokens": stats.get("total_cache_write_tokens", 0),
         "is_running": info["is_running"],
     }
 

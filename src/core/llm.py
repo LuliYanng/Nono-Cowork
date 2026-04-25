@@ -1,39 +1,13 @@
 """
-LLM client — wraps LiteLLM calls, cache control injection, and token stats tracking.
+LLM client — wraps LiteLLM calls, prompt caching, and token stats tracking.
 """
 
 import warnings
 import litellm
-from config import MODEL, API_BASE, API_KEY, CACHE_CONTROL_PROVIDERS
+from config import MODEL, API_BASE, API_KEY
 
 # Suppress Pydantic serialization warnings triggered by LiteLLM (harmless)
 warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
-
-
-def inject_cache_control(messages: list, model: str) -> list:
-    """Inject cache_control markers for models that support prompt caching.
-
-    For unsupported models, returns messages unchanged.
-    """
-    if not any(model.startswith(p) for p in CACHE_CONTROL_PROVIDERS):
-        return messages  # Unsupported model, pass through
-
-    enhanced = []
-    for msg in messages:
-        if isinstance(msg, dict) and msg.get("role") == "user":
-            content = msg.get("content", "")
-            # Plain string → add cache_control
-            if isinstance(content, str):
-                enhanced.append({
-                    **msg,
-                    "content": [{"type": "text", "text": content,
-                                 "cache_control": {"type": "ephemeral"}}]
-                })
-            else:
-                enhanced.append(msg)
-        else:
-            enhanced.append(msg)
-    return enhanced
 
 
 def _build_llm_kwargs(messages: list, model: str = None, tools: list = None) -> dict:
@@ -43,7 +17,7 @@ def _build_llm_kwargs(messages: list, model: str = None, tools: list = None) -> 
 
     kwargs = {
         "model": model,
-        "messages": inject_cache_control(messages, model),
+        "messages": messages,
         "drop_params": True,  # Auto-drop params unsupported by target model
     }
     if tools:
@@ -56,6 +30,15 @@ def _build_llm_kwargs(messages: list, model: str = None, tools: list = None) -> 
     _parts = model.split("/") if _has_provider_prefix else []
     _provider = _parts[0] if _parts else ""
     _sub_provider = _parts[1] if len(_parts) >= 3 else ""
+
+    # ── Prompt caching ──
+    # Anthropic requires explicit cache_control; OpenAI/DeepSeek auto-cache.
+    # Using top-level cache_control lets OpenRouter auto-place the breakpoint
+    # at the last cacheable block and advance it as conversations grow.
+    # OpenRouter also enables sticky routing to keep the cache warm.
+    _CACHE_PROVIDERS = {"anthropic"}
+    if _provider in _CACHE_PROVIDERS or _sub_provider in _CACHE_PROVIDERS:
+        kwargs["cache_control"] = {"type": "ephemeral"}
 
     # Enable thinking/reasoning for models that support it
     # LiteLLM maps reasoning_effort to Gemini's thinking_level automatically
@@ -107,12 +90,20 @@ def call_llm_stream(messages: list, model: str = None, tools: list = None):
 
 
 def extract_cache_info(usage) -> dict:
-    """Extract cache-related info from a completion usage object."""
+    """Extract cache-related info from a completion usage object.
+
+    Handles both Anthropic's field names (cache_creation_input_tokens)
+    and OpenRouter's normalized names (cache_write_tokens).
+    """
     cache_info = {}
     prompt_details = getattr(usage, "prompt_tokens_details", None)
     if prompt_details:
         cache_info["cached_tokens"] = getattr(prompt_details, "cached_tokens", 0) or 0
-        cache_info["cache_creation_tokens"] = getattr(prompt_details, "cache_creation_input_tokens", 0) or 0
+        cache_info["cache_creation_tokens"] = (
+            getattr(prompt_details, "cache_creation_input_tokens", 0)
+            or getattr(prompt_details, "cache_write_tokens", 0)
+            or 0
+        )
     return cache_info
 
 
@@ -124,6 +115,7 @@ def update_token_stats(token_stats: dict, usage, cache_info: dict) -> None:
     token_stats["total_completion_tokens"] += usage.completion_tokens or 0
     token_stats["total_tokens"] += usage.total_tokens or 0
     token_stats["total_cached_tokens"] += cache_info.get("cached_tokens", 0)
+    token_stats["total_cache_write_tokens"] += cache_info.get("cache_creation_tokens", 0)
     token_stats["total_api_calls"] += 1
     # Track last call's prompt tokens = current context size
     token_stats["last_prompt_tokens"] = usage.prompt_tokens or 0
@@ -136,6 +128,7 @@ def make_empty_token_stats() -> dict:
         "total_completion_tokens": 0,
         "total_tokens": 0,
         "total_cached_tokens": 0,
+        "total_cache_write_tokens": 0,
         "total_api_calls": 0,
         "last_prompt_tokens": 0,
     }
