@@ -269,6 +269,23 @@ class SessionManager:
         except Exception as e:
             logger.error("Failed to save session: %s", e)
 
+    def apply_cache_backfill(self, user_id: str, cached_tokens: int, cache_write_tokens: int):
+        """Apply delayed cache usage discovered after the main response completed."""
+        if not cached_tokens and not cache_write_tokens:
+            return
+
+        with self._global_lock:
+            session = self._sessions.get(user_id)
+            if not session:
+                return
+            stats = session.setdefault("token_stats", make_empty_token_stats())
+            stats.setdefault("total_cached_tokens", 0)
+            stats.setdefault("total_cache_write_tokens", 0)
+            stats["total_cached_tokens"] += cached_tokens
+            stats["total_cache_write_tokens"] += cache_write_tokens
+
+        self.save_session(user_id)
+
     def _load_latest_session(self, user_id: str) -> dict | None:
         """Find and load the most recent session file for a user."""
         if not os.path.isdir(SESSIONS_DIR):

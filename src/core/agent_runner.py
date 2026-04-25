@@ -146,7 +146,7 @@ def run_agent_for_message(user_id: str, user_text: str,
 
         # Run Agent
         try:
-            updated_history, updated_stats = agent_loop(
+            updated_history, updated_stats, pending_cache_backfills = agent_loop(
                 history, log_file, token_stats,
                 on_event=on_event,
                 check_stop=check_stop,
@@ -177,6 +177,34 @@ def run_agent_for_message(user_id: str, user_text: str,
 
             # Persist session to disk after each interaction
             sessions.save_session(user_id)
+
+            if pending_cache_backfills:
+                from core.llm import await_openrouter_cache_info
+
+                def _backfill_cache_usage():
+                    total_cached = 0
+                    total_written = 0
+                    for item in pending_cache_backfills:
+                        try:
+                            recovered = await_openrouter_cache_info(
+                                item["generation_id"],
+                                item["model"],
+                            )
+                        except Exception:
+                            continue
+                        total_cached += recovered.get("cached_tokens", 0) or 0
+                        total_written += recovered.get("cache_creation_tokens", 0) or 0
+
+                    if total_cached or total_written:
+                        sessions.apply_cache_backfill(user_id, total_cached, total_written)
+                        log_event(log_file, {
+                            "type": "cache_backfill",
+                            "cached_tokens": total_cached,
+                            "cache_creation_tokens": total_written,
+                        })
+
+                import threading
+                threading.Thread(target=_backfill_cache_usage, daemon=True).start()
 
             # Check if we were stopped
             was_stopped = sessions.is_stopped(user_id)

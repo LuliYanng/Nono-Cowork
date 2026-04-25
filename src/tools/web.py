@@ -54,28 +54,42 @@ def read_webpage(url: str) -> str:
 @tool(
     name="web_search",
     tags=["network", "read"],
-    description="Search the internet using a search engine. Use this when you need to find general (non-academic) information such as tool documentation, tech blogs, error solutions, open-source project info, etc.",
+    description=(
+        "Search the internet using a search engine. Use this to find documentation, "
+        "tech blogs, error solutions, latest news, release announcements, and general information. "
+        "IMPORTANT: Always prefer English search queries for better result quality and coverage, "
+        "even when the user's question is in another language. "
+        "Use timelimit='w' or 'd' for time-sensitive queries like 'latest news' or 'recent releases'."
+    ),
     parameters={
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Search keywords.",
+                "description": "Search keywords. Prefer English queries for higher-quality results.",
             },
             "max_results": {
                 "type": "integer",
                 "description": "Maximum number of results to return. Default is 5.",
                 "default": 5,
             },
+            "timelimit": {
+                "type": "string",
+                "description": (
+                    "Filter results by recency. Use this for time-sensitive queries. "
+                    "Options: 'd' (past day), 'w' (past week), 'm' (past month), 'y' (past year). "
+                    "Omit to get all-time results."
+                ),
+            },
         },
         "required": ["query"],
     },
 )
-def web_search(query: str, max_results: int = 5) -> str:
+def web_search(query: str, max_results: int = 5, timelimit: str | None = None) -> str:
     """Search the internet for information."""
     try:
         ddgs = DDGS()
-        results = list(ddgs.text(query, max_results=max_results))
+        results = list(ddgs.text(query, max_results=max_results, timelimit=timelimit))
 
         if not results:
             return f"No results found for '{query}'."

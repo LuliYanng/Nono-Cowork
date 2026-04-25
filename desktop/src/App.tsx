@@ -996,6 +996,27 @@ function App() {
     }
   }, []);
 
+  const statusRefreshTimers = useRef<number[]>([]);
+
+  useEffect(() => {
+    return () => {
+      statusRefreshTimers.current.forEach((id) => window.clearTimeout(id));
+      statusRefreshTimers.current = [];
+    };
+  }, []);
+
+  const scheduleStatusRefreshBurst = useCallback(() => {
+    statusRefreshTimers.current.forEach((id) => window.clearTimeout(id));
+    statusRefreshTimers.current = [];
+
+    [2000, 5000, 9000, 14000, 20000].forEach((delayMs) => {
+      const timeoutId = window.setTimeout(() => {
+        void refreshStatus();
+      }, delayMs);
+      statusRefreshTimers.current.push(timeoutId);
+    });
+  }, [refreshStatus]);
+
   // Fetch available models list
   const fetchModels = useCallback(async () => {
     try {
@@ -1531,9 +1552,10 @@ function App() {
       setThinkingMsgId(null);
       setStatusText("");
       refreshStatus();
+      scheduleStatusRefreshBurst();
       fetchSessions();
     }
-  }, [isStreaming, nextId, refreshStatus, fetchSessions]);
+  }, [isStreaming, nextId, refreshStatus, scheduleStatusRefreshBurst, fetchSessions]);
 
 
   // PromptInput onSubmit handler — receives { text, files } from the component

@@ -165,7 +165,7 @@ def _stream_llm_response(history, active_model, active_tools, check_stop, on_eve
     """Stream an LLM response, accumulating content/reasoning/tool_calls.
 
     Returns:
-        (msg, usage, final_text, stopped) where msg is a LiteLLM Message object.
+        (msg, usage, final_text, stopped, generation_id) where msg is a LiteLLM Message object.
     """
     from litellm.types.utils import Message as LitellmMessage, ChatCompletionMessageToolCall, Function
 
@@ -176,6 +176,7 @@ def _stream_llm_response(history, active_model, active_tools, check_stop, on_eve
     accumulated_tool_calls = {}
     usage = None
     stopped = False
+    generation_id = None
 
     # Wrap stream iteration in a background thread so we can watchdog for
     # mid-stream silence and poll the stop flag without being blocked on the
@@ -225,8 +226,11 @@ def _stream_llm_response(history, active_model, active_tools, check_stop, on_eve
 
         delta = chunk.choices[0].delta if chunk.choices else None
         chunk_usage = getattr(chunk, "usage", None)
+        chunk_id = getattr(chunk, "id", None)
         if chunk_usage:
             usage = chunk_usage
+        if chunk_id:
+            generation_id = chunk_id
 
         if not delta:
             continue
@@ -316,7 +320,7 @@ def _stream_llm_response(history, active_model, active_tools, check_stop, on_eve
         if text:
             final_text = text
 
-    return msg, usage, final_text, stopped
+    return msg, usage, final_text, stopped, generation_id
 
 
 # ── Tool dispatch ─────────────────────────────────────────────────────────────
@@ -427,6 +431,7 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
     last_prompt_tokens = 0
     active_model = model_override or MODEL
     _stopped = False
+    pending_cache_backfills = []
 
     # Resolve active tool schemas (inject report_result if missing)
     active_tools = tools_override or tools_schema
@@ -474,17 +479,29 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
             history = _sanitize_history(history)
 
             # ── 2. Stream LLM response ──
-            msg, usage, final_text, stopped = _stream_llm_response(
+            msg, usage, final_text, stopped, generation_id = _stream_llm_response(
                 history, active_model, active_tools, check_stop, on_event, round_num,
             )
             if stopped:
                 _stopped = True
 
             # Update token stats
-            cache_info = extract_cache_info(usage) if usage else {}
+            cache_info = extract_cache_info(
+                usage, generation_id=generation_id, model=active_model,
+            ) if usage else {}
             if usage:
                 update_token_stats(token_stats, usage, cache_info)
                 last_prompt_tokens = _usage_field(usage, "prompt_tokens", 0) or 0
+                if (
+                    generation_id
+                    and active_model.startswith("openrouter/")
+                    and not cache_info.get("cached_tokens")
+                    and not cache_info.get("cache_creation_tokens")
+                ):
+                    pending_cache_backfills.append({
+                        "generation_id": generation_id,
+                        "model": active_model,
+                    })
 
             log_event(log_file, {
                 "type": "llm_response", "round": round_num, "model": active_model,
@@ -564,4 +581,4 @@ def agent_loop(history: list[dict], log_file=None, token_stats: dict = None,
 
     log_event(log_file, {"type": "task_token_summary", **token_stats})
 
-    return history, token_stats
+    return history, token_stats, pending_cache_backfills
