@@ -81,11 +81,15 @@ class DesktopChannel(Channel):
         """Send a status update."""
         self._push_event(user_id, "status", {"text": text})
 
-    def dispatch_and_stream(self, user_id: str, user_text: str):
+    def dispatch_and_stream(self, user_id: str, user_text: str, images: list[dict] | None = None):
         """Dispatch the message and signal 'done' when the agent finishes.
 
         This overrides the base dispatch to add a 'done' event at the end
         and to capture on_event callbacks for richer SSE streaming.
+
+        Args:
+            images: Optional list of image dicts for multimodal input.
+                    Each dict: {"data": "data:image/...;base64,...", "filename": "..."}
         """
         from core.agent_runner import run_agent_for_message
 
@@ -160,6 +164,7 @@ class DesktopChannel(Channel):
             reply_func, status_func,
             channel_name=self.name,
             on_event_hook=event_hook,
+            images=images or None,
         )
         self._push_event(user_id, "done", {})
 
@@ -254,13 +259,16 @@ async def status():
 async def chat(request: Request):
     """Send a message and stream back events via SSE.
 
-    Request body: {"message": "user text here"}
+    Request body: {"message": "user text here", "images": [{"data": "data:...", "filename": "..."}]}
     Returns: SSE stream with events: status, reply, done
     """
     body = await request.json()
     message = body.get("message", "").strip()
-    if not message:
+    images = body.get("images") or None  # list of {"data": "data:image/...;base64,...", "filename": "..."}
+    if not message and not images:
         return JSONResponse({"error": "empty message"}, status_code=400)
+    if not message and images:
+        message = "(see attached images)"
 
     user_id = DESKTOP_USER_ID
 
@@ -276,6 +284,7 @@ async def chat(request: Request):
     thread = threading.Thread(
         target=channel.dispatch_and_stream,
         args=(user_id, message),
+        kwargs={"images": images},
         daemon=True,
     )
     thread.start()

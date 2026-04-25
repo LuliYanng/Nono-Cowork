@@ -15,7 +15,8 @@ def run_agent_for_message(user_id: str, user_text: str,
                           reply_func, status_func=None,
                           channel_name: str = "unknown",
                           on_event_hook=None,
-                          channel_user_id: str | None = None):
+                          channel_user_id: str | None = None,
+                          images: list[dict] | None = None):
     """
     Run Agent in the calling thread and reply via callback functions.
 
@@ -29,6 +30,8 @@ def run_agent_for_message(user_id: str, user_text: str,
         status_func: Optional callback for status updates: status_func(text)
         channel_name: Channel name (for logging)
         on_event_hook: Optional callback for structured agent events: on_event_hook(evt)
+        images: Optional list of image dicts [{"data": "data:image/png;base64,...", "filename": "..."}]
+                for multimodal LLM input
     """
     from core.agent import agent_loop
     from logger import log_event
@@ -80,8 +83,21 @@ def run_agent_for_message(user_id: str, user_text: str,
         if sync_ctx:
             logger.info("[%s] Sync context injected:\n%s", channel_name, sync_ctx)
 
+        # Build user message content — multimodal when images are attached
+        if images:
+            user_content = [
+                {"type": "text", "text": user_text},
+            ]
+            for img in images:
+                user_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": img["data"]},
+                })
+        else:
+            user_content = user_text
+
         # Append ORIGINAL user message to history (this is what gets persisted & shown in frontend)
-        history.append({"role": "user", "content": user_text})
+        history.append({"role": "user", "content": user_content})
         # Update last_active only when user actually sends a message
         sessions.touch_session(user_id)
         # Log the original text to session log file
@@ -89,12 +105,21 @@ def run_agent_for_message(user_id: str, user_text: str,
             "type": f"{channel_name}_message",
             "user_id": user_id,
             "content": user_text,
+            "image_count": len(images) if images else 0,
         })
 
         # Temporarily inject sync context into the last user message for the LLM call only
         if sync_ctx:
             augmented_text = f"{sync_ctx}\n\n{user_text}"
-            history[-1] = {"role": "user", "content": augmented_text}
+            if images:
+                # Multimodal: replace the text part, keep images
+                augmented_content = [
+                    {"type": "text", "text": augmented_text},
+                    *[p for p in user_content if p.get("type") == "image_url"],
+                ]
+                history[-1] = {"role": "user", "content": augmented_content}
+            else:
+                history[-1] = {"role": "user", "content": augmented_text}
 
         # Agent event collector
         events = []
@@ -131,9 +156,21 @@ def run_agent_for_message(user_id: str, user_text: str,
             # Restore original user message (strip sync context before persisting)
             if sync_ctx:
                 for msg in updated_history:
-                    if msg.get("role") == "user" and msg.get("content") == augmented_text:
-                        msg["content"] = user_text
-                        break
+                    if msg.get("role") != "user":
+                        continue
+                    c = msg.get("content")
+                    if images:
+                        # Multimodal: restore to original content array
+                        if isinstance(c, list) and any(
+                            p.get("type") == "text" and p.get("text") == augmented_text
+                            for p in c
+                        ):
+                            msg["content"] = user_content
+                            break
+                    else:
+                        if c == augmented_text:
+                            msg["content"] = user_text
+                            break
 
             session["history"] = updated_history
             session["token_stats"] = updated_stats

@@ -56,12 +56,24 @@ def _serialize_message(msg) -> dict:
 
     Handles both plain dicts (user/system/tool messages) and
     LiteLLM Message objects (assistant messages with tool_calls).
+
+    Multimodal content (lists with image_url parts) is sanitized:
+    inline base64 data is stripped to keep session files small.
     """
     if isinstance(msg, dict):
-        return msg
+        result = dict(msg)
+        # Sanitize multimodal content arrays (strip base64 image data)
+        content = result.get("content")
+        if isinstance(content, list):
+            result["content"] = _sanitize_multimodal_content(content)
+        return result
 
     # OpenAI/LiteLLM message object
     d = {"role": msg.role, "content": msg.content}
+
+    # Sanitize multimodal content
+    if isinstance(d["content"], list):
+        d["content"] = _sanitize_multimodal_content(d["content"])
 
     # Preserve reasoning_content if present (e.g. DeepSeek)
     reasoning = getattr(msg, "reasoning_content", None)
@@ -92,6 +104,34 @@ def _serialize_message(msg) -> dict:
         d["tool_calls"] = serialized_tcs
 
     return d
+
+
+def _sanitize_multimodal_content(content: list) -> list:
+    """Strip inline base64 data from multimodal content arrays.
+
+    Replaces image_url data URLs with a placeholder so session JSON
+    files stay small.  The original images are ephemeral — they were
+    sent to the LLM but don't need to be persisted for session replay.
+    """
+    sanitized = []
+    for part in content:
+        if not isinstance(part, dict):
+            sanitized.append(part)
+            continue
+        if part.get("type") == "image_url":
+            url = part.get("image_url", {}).get("url", "")
+            if url.startswith("data:"):
+                # Extract mime type for display, strip data
+                mime = url.split(";")[0].replace("data:", "") if ";" in url else "image/unknown"
+                sanitized.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"[image:{mime}]"},
+                })
+            else:
+                sanitized.append(part)
+        else:
+            sanitized.append(part)
+    return sanitized
 
 
 def _serialize_history(history: list) -> list[dict]:
@@ -455,7 +495,19 @@ class SessionManager:
                     for msg in data.get("history", []):
                         if msg.get("role") == "user":
                             if not preview:
-                                preview = msg["content"][:60]
+                                content = msg.get("content", "")
+                                if isinstance(content, list):
+                                    # Multimodal: extract text part
+                                    text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
+                                    has_images = any(p.get("type") == "image_url" for p in content)
+                                    preview_text = " ".join(text_parts).strip()
+                                    if has_images and not preview_text:
+                                        preview_text = "📷 (image)"
+                                    elif has_images:
+                                        preview_text = f"📷 {preview_text}"
+                                    preview = preview_text[:60]
+                                else:
+                                    preview = str(content)[:60]
                             has_user_msg = True
                             break
 

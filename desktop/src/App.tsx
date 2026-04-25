@@ -88,7 +88,13 @@ import {
   PromptInput,
   PromptInputTextarea,
   PromptInputFooter,
+  PromptInputHeader,
   PromptInputSubmit,
+  PromptInputActionMenu,
+  PromptInputActionMenuTrigger,
+  PromptInputActionMenuContent,
+  PromptInputActionAddAttachments,
+  usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input";
 import { SyncFolderWidget } from "@/components/sync-folder-widget";
 import {
@@ -141,7 +147,7 @@ import {
   ModelSelectorLogo,
   ModelSelectorName,
 } from "@/components/ai-elements/model-selector";
-import { PanelLeft, ChevronDown, Square, AlertCircle, RotateCcw } from "lucide-react";
+import { PanelLeft, ChevronDown, Square, AlertCircle, RotateCcw, ImageIcon, Paperclip, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -202,6 +208,8 @@ interface ChatMessage {
   content: string;
   reasoning?: string;
   parts?: MessagePart[];
+  // User-attached images (data URLs for display)
+  images?: { data: string; filename: string }[];
   // Marks assistant messages that carry a backend/connection error so the
   // UI can render them distinctly (red banner + retry) instead of looking
   // like a normal reply.
@@ -251,10 +259,32 @@ function convertHistoryToMessages(backendMessages: any[]): { messages: ChatMessa
   for (const msg of backendMessages) {
     if (msg.role === "user") {
       flushAssistant();
+      // Handle multimodal content (array with text + image_url parts)
+      let textContent = "";
+      const histImages: { data: string; filename: string }[] = [];
+      if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          if (part.type === "text") {
+            textContent = part.text || "";
+          } else if (part.type === "image_url") {
+            const url = part.image_url?.url || "";
+            // Persisted sessions have placeholder like "[image:image/png]"
+            if (url && !url.startsWith("[")) {
+              histImages.push({ data: url, filename: "image" });
+            } else if (url.startsWith("[image:")) {
+              // Show placeholder for stripped images
+              histImages.push({ data: "", filename: url });
+            }
+          }
+        }
+      } else {
+        textContent = msg.content || "";
+      }
       msgs.push({
         id: `hist-${++counter}`,
         role: "user",
-        content: msg.content || "",
+        content: textContent,
+        ...(histImages.length > 0 ? { images: histImages } : {}),
       });
     } else if (msg.role === "assistant") {
       // 1. Reasoning content → reasoning part
@@ -488,6 +518,45 @@ function CollapsibleUserMessage({ content }: { content: string }) {
         </button>
       )}
     </div>
+  );
+}
+
+// ── Attachment Preview (inline in the prompt input header) ──
+
+function AttachmentPreview() {
+  const attachments = usePromptInputAttachments();
+  if (attachments.files.length === 0) return null;
+
+  return (
+    <PromptInputHeader>
+      <div className="flex flex-wrap gap-2 p-2">
+        {attachments.files.map((file) => (
+          <div
+            key={file.id}
+            className="group relative rounded-lg border border-border/50 overflow-hidden"
+          >
+            {file.mediaType?.startsWith("image/") ? (
+              <img
+                src={file.url}
+                alt={file.filename || "Attachment"}
+                className="h-16 w-16 object-cover"
+              />
+            ) : (
+              <div className="flex h-16 w-16 items-center justify-center bg-muted">
+                <Paperclip className="size-5 text-muted-foreground" />
+              </div>
+            )}
+            <button
+              onClick={() => attachments.remove(file.id)}
+              className="absolute -right-1 -top-1 hidden group-hover:flex size-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-sm cursor-pointer"
+              type="button"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </PromptInputHeader>
   );
 }
 
@@ -1288,12 +1357,21 @@ function App() {
   }, [fetchNotifications]);
 
   // Send message — called by PromptInput onSubmit with { text, files }
-  const handleSubmit = useCallback(async (overrideText?: string) => {
+  const handleSubmit = useCallback(async (
+    overrideText?: string,
+    attachedImages?: { data: string; filename: string }[],
+  ) => {
     const text = (overrideText ?? inputRef.current).trim();
-    if (!text || isStreaming) return;
+    const hasImages = attachedImages && attachedImages.length > 0;
+    if ((!text && !hasImages) || isStreaming) return;
 
-    // Add user message
-    const userMsg: ChatMessage = { id: nextId(), role: "user", content: text };
+    // Add user message (with image thumbnails for display)
+    const userMsg: ChatMessage = {
+      id: nextId(),
+      role: "user",
+      content: text || (hasImages ? "(see attached images)" : ""),
+      ...(hasImages ? { images: attachedImages } : {}),
+    };
     setMessages((prev) => [...prev, userMsg]);
     if (overrideText === undefined) {
       setInput("");
@@ -1328,10 +1406,19 @@ function App() {
     };
 
     try {
+      // Build request body — include images when present
+      const chatBody: Record<string, unknown> = { message: text || "(see attached images)" };
+      if (hasImages) {
+        chatBody.images = attachedImages!.map((img) => ({
+          data: img.data,
+          filename: img.filename,
+        }));
+      }
+
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify(chatBody),
       });
 
       if (!res.ok) {
@@ -1449,8 +1536,21 @@ function App() {
 
 
   // PromptInput onSubmit handler — receives { text, files } from the component
-  const handlePromptSubmit = useCallback(async () => {
-    await handleSubmit();
+  const handlePromptSubmit = useCallback(async (
+    message: { text: string; files: import("ai").FileUIPart[] },
+  ) => {
+    // Extract image files as data URLs for the API
+    const imageFiles = message.files.filter((f) =>
+      f.mediaType?.startsWith("image/"),
+    );
+    const images: { data: string; filename: string }[] = imageFiles
+      .filter((f) => f.url && !f.url.startsWith("blob:"))  // Already converted to data URL by PromptInput
+      .map((f) => ({ data: f.url, filename: f.filename || "image" }));
+
+    await handleSubmit(
+      message.text || undefined,
+      images.length > 0 ? images : undefined,
+    );
   }, [handleSubmit]);
 
   // Retry: find the user message immediately preceding the clicked error
@@ -1666,7 +1766,10 @@ function App() {
                 <div className="w-full">
                   <PromptInput
                     onSubmit={handlePromptSubmit}
+                    accept="image/*"
+                    multiple
                   >
+                    <AttachmentPreview />
                     <PromptInputTextarea
                       placeholder="Type a message..."
                       value={input}
@@ -1674,6 +1777,15 @@ function App() {
                     />
                     <PromptInputFooter>
                       <div className="flex items-center gap-1">
+                        {/* Attachment menu */}
+                        <PromptInputActionMenu>
+                          <PromptInputActionMenuTrigger
+                            tooltip="Attach image"
+                          />
+                          <PromptInputActionMenuContent>
+                            <PromptInputActionAddAttachments label="Add images" />
+                          </PromptInputActionMenuContent>
+                        </PromptInputActionMenu>
                         {/* Sync Folder */}
                         <SyncFolderWidget
                           apiBase={API_BASE}
@@ -1891,7 +2003,32 @@ function App() {
                                   )}
                                 </>
                               ) : (
-                                <CollapsibleUserMessage content={msg.content} />
+                                <>
+                                  {/* User-attached image thumbnails */}
+                                  {msg.images && msg.images.length > 0 && (
+                                    <div className="flex flex-wrap gap-2 mb-2">
+                                      {msg.images.map((img, imgIdx) => (
+                                        img.data ? (
+                                          <img
+                                            key={imgIdx}
+                                            src={img.data}
+                                            alt={img.filename || "Attached image"}
+                                            className="max-w-[200px] max-h-[200px] rounded-md object-cover border border-border/50"
+                                          />
+                                        ) : (
+                                          <div
+                                            key={imgIdx}
+                                            className="flex items-center gap-1.5 rounded-md border border-border/50 bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"
+                                          >
+                                            <ImageIcon className="size-3.5" />
+                                            <span>{img.filename.replace(/^\[image:/, "").replace(/\]$/, "")}</span>
+                                          </div>
+                                        )
+                                      ))}
+                                    </div>
+                                  )}
+                                  <CollapsibleUserMessage content={msg.content} />
+                                </>
                               )}
                             </MessageContent>
                           </Message>
@@ -1945,7 +2082,10 @@ function App() {
                 <div className="w-[85%] max-w-5xl mx-auto">
                   <PromptInput
                     onSubmit={handlePromptSubmit}
+                    accept="image/*"
+                    multiple
                   >
+                    <AttachmentPreview />
                     <PromptInputTextarea
                       placeholder="Type a message..."
                       value={input}
@@ -1953,6 +2093,15 @@ function App() {
                     />
                     <PromptInputFooter>
                       <div className="flex items-center gap-1">
+                        {/* Attachment menu */}
+                        <PromptInputActionMenu>
+                          <PromptInputActionMenuTrigger
+                            tooltip="Attach image"
+                          />
+                          <PromptInputActionMenuContent>
+                            <PromptInputActionAddAttachments label="Add images" />
+                          </PromptInputActionMenuContent>
+                        </PromptInputActionMenu>
                         {/* Sync Folder */}
                         <SyncFolderWidget
                           apiBase={API_BASE}
