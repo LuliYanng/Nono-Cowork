@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const http = require('http');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 
 // ── Local config persistence ──
 // Stores { apiBase, apiToken } in userData directory
@@ -175,6 +175,43 @@ async function waitForManagedSyncthingReady() {
   throw new Error('Managed Syncthing startup timed out');
 }
 
+/**
+ * Kill any leftover Syncthing processes from prior desktop sessions.
+ * On Windows, a crash or force-quit can leave a zombie syncthing.exe
+ * that still holds file locks (e.g. on .stignore) but no longer listens
+ * on any port — preventing the new embedded instance from starting.
+ */
+function killZombieSyncthingProcesses(ownExePath) {
+  if (process.platform !== 'win32') return;
+  try {
+    // tasklist gives us the PIDs and image paths of all syncthing.exe
+    const raw = execSync(
+      'wmic process where "name=\'syncthing.exe\'" get ProcessId,ExecutablePath /format:csv',
+      { windowsHide: true, encoding: 'utf8', timeout: 5000 },
+    ).trim();
+    const lines = raw.split('\n').filter((l) => l.includes('syncthing'));
+    const ownResolved = path.resolve(ownExePath);
+    for (const line of lines) {
+      const parts = line.split(',').map((s) => s.trim());
+      // CSV: Node, ExecutablePath, ProcessId
+      const exePath = parts[1] || '';
+      const pid = parseInt(parts[2], 10);
+      if (!pid || pid === process.pid) continue;
+      // Only kill processes that match our own managed binary path
+      if (path.resolve(exePath) === ownResolved) {
+        try {
+          process.kill(pid, 'SIGTERM');
+          console.info(`[Syncthing] Killed leftover process PID=${pid}`);
+        } catch {
+          // Already exited or permission denied — ignore.
+        }
+      }
+    }
+  } catch {
+    // wmic may not be available or timed out — non-fatal.
+  }
+}
+
 async function initializeSyncthingRuntime() {
   syncthingRuntime = {
     managed: false,
@@ -192,6 +229,10 @@ async function initializeSyncthingRuntime() {
     console.warn('[Syncthing] Embedded binary not found, fallback to external Syncthing instance.');
     return;
   }
+
+  // Clean up zombie Syncthing processes from prior sessions that may
+  // still hold file locks (e.g. .stignore), preventing startup.
+  killZombieSyncthingProcesses(exePath);
 
   const homePath = getManagedSyncthingHomePath();
   fs.mkdirSync(homePath, { recursive: true });
@@ -441,6 +482,17 @@ function ensureDefaultStignore(folderPath) {
       fs.mkdirSync(folderPath, { recursive: true });
       fs.writeFileSync(ignorePath, DEFAULT_STIGNORE, 'utf8');
       return true;
+    }
+
+    // On Windows, Syncthing may mark .stignore as Hidden. Node.js
+    // fs.writeFileSync throws EPERM when writing to a Hidden file.
+    // Clear the Hidden attribute before attempting any write.
+    if (process.platform === 'win32') {
+      try {
+        execSync(`attrib -H "${ignorePath}"`, { windowsHide: true, stdio: 'ignore' });
+      } catch {
+        // Best-effort: if attrib fails we'll still try the write.
+      }
     }
 
     const existing = fs.readFileSync(ignorePath, 'utf8');

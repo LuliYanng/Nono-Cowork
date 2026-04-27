@@ -1211,24 +1211,31 @@ export type PromptInputSubmitProps = ComponentProps<typeof InputGroupButton> & {
 
 export const PromptInputSubmit = ({
   className,
-  variant = "default",
+  variant = "ghost",
   size = "icon-sm",
   status,
   onStop,
   onClick,
+  disabled,
   children,
   ...props
 }: PromptInputSubmitProps) => {
   const isGenerating = status === "submitted" || status === "streaming";
 
-  let Icon = <CornerDownLeftIcon className="size-4" />;
+  // Icon 颜色：idle/disabled 时浅灰，激活（可发送）或 generating 时深灰
+  const isActive = isGenerating || !disabled;
+  const iconColorClass = isActive
+    ? "text-foreground/60"
+    : "text-foreground/25";
+
+  let Icon = <CornerDownLeftIcon className={cn("size-4", iconColorClass)} />;
 
   if (status === "submitted") {
     Icon = <Spinner />;
   } else if (status === "streaming") {
-    Icon = <SquareIcon className="size-4" />;
+    Icon = <SquareIcon className={cn("size-4", iconColorClass)} />;
   } else if (status === "error") {
-    Icon = <XIcon className="size-4" />;
+    Icon = <XIcon className={cn("size-4", iconColorClass)} />;
   }
 
   const handleClick = useCallback(
@@ -1247,6 +1254,7 @@ export const PromptInputSubmit = ({
     <InputGroupButton
       aria-label={isGenerating ? "Stop" : "Submit"}
       className={cn(className)}
+      disabled={disabled}
       onClick={handleClick}
       size={size}
       type={isGenerating && onStop ? "button" : "submit"}

@@ -1,5 +1,33 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, Component } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 import { Toaster, toast } from "sonner";
+
+// ── Global Error Boundary ── catches render errors including those in Portals ──
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[App] Unhandled render error:", error, info.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100vh', gap:16, padding:32, textAlign:'center', fontFamily:'system-ui' }}>
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <p style={{ color:'#ef4444', fontWeight:600, fontSize:14, margin:0 }}>Render error — check DevTools console (Ctrl+Shift+I)</p>
+          <pre style={{ fontSize:12, color:'#888', background:'#f3f4f6', padding:12, borderRadius:6, maxWidth:600, overflow:'auto', textAlign:'left', whiteSpace:'pre-wrap', margin:0 }}>{this.state.error.message}{"\n"}{this.state.error.stack?.split("\n").slice(0,10).join("\n")}</pre>
+          <button style={{ fontSize:12, padding:'6px 14px', borderRadius:6, border:'1px solid #d1d5db', background:'#f9fafb', cursor:'pointer' }} onClick={() => this.setState({ error: null })}>Dismiss</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // Electron window control API exposed via preload
 declare global {
@@ -1900,7 +1928,9 @@ function App() {
             <>
               <div className="relative flex-1 min-h-0">
                 {/* Top gradient fade below title bar */}
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-background to-transparent z-10" />
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-8 z-10 flex justify-center">
+                  <div className="w-[85%] max-w-5xl h-full bg-gradient-to-b from-background to-transparent" />
+                </div>
                 <Conversation className="h-full">
                 <ConversationContent className="w-[85%] max-w-5xl mx-auto pb-6">
                     {/* Skeleton loading for session switch */}
@@ -2104,7 +2134,9 @@ function App() {
 
               {/* Input area with gradient fade above */}
               <div className="relative shrink-0 px-4 pb-4">
-                <div className="pointer-events-none absolute inset-x-0 -top-8 h-8 bg-gradient-to-t from-background to-transparent" />
+                <div className="pointer-events-none absolute inset-x-0 -top-8 h-8 flex justify-center">
+                  <div className="w-[85%] max-w-5xl h-full bg-gradient-to-t from-background to-transparent" />
+                </div>
                 <div className="w-[85%] max-w-5xl mx-auto">
                   <PromptInput
                     onSubmit={handlePromptSubmit}
@@ -2494,4 +2526,12 @@ function App() {
   );
 }
 
-export default App;
+function AppWithErrorBoundary() {
+  return (
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
+  );
+}
+
+export default AppWithErrorBoundary;

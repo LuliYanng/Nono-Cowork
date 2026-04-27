@@ -54,7 +54,8 @@ export function RoutineEditorDialog({ open, onOpenChange, automation, onSave }: 
       if (automation) {
         setType(automation.type);
         setModel(automation.model || "");
-        setToolAccess(automation.config?.tool_access as string || "full");
+        const rawToolAccess = (automation.config?.tool_access as string) || "full";
+        setToolAccess(["full", "read_only", "none"].includes(rawToolAccess) ? rawToolAccess : "full");
 
         if (automation.type === "cron") {
           setName(automation.name || "");
@@ -258,6 +259,13 @@ export function RoutineEditorDialog({ open, onOpenChange, automation, onSave }: 
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="default">Global Default</SelectItem>
+                  {/* Ensure the current model always appears as an option even
+                      before the async /api/models fetch completes. Without this,
+                      @base-ui Select crashes (white screen) when value doesn't
+                      match any SelectItem. */}
+                  {model && model !== "default" && !availableModels.includes(model) && (
+                    <SelectItem value={model}>{model.split('/').pop()}</SelectItem>
+                  )}
                   {availableModels.map(m => (
                     <SelectItem key={m} value={m}>{m.split('/').pop()}</SelectItem>
                   ))}

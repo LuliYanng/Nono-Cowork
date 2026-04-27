@@ -176,8 +176,8 @@ export function Sidebar({
 
   return (
     <aside
-      className={`flex flex-col h-full bg-sidebar text-sidebar-foreground shrink-0 border-r overflow-hidden transition-[width] duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] ${
-        isOpen ? "w-[260px] border-sidebar-border" : "w-0 border-transparent"
+      className={`flex flex-col h-full bg-sidebar text-sidebar-foreground shrink-0 overflow-hidden transition-[width,box-shadow] duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] ${
+        isOpen ? "w-[260px] shadow-[4px_0_24px_-4px_rgba(0,0,0,0.15)]" : "w-0"
       }`}
     >
       <div className="flex flex-col h-full min-w-[260px]">
@@ -216,8 +216,8 @@ export function Sidebar({
 
         {/* Navigation items */}
         <div
-          className="flex flex-col flex-1 overflow-y-auto"
-          style={{ WebkitAppRegion: "no-drag", scrollbarGutter: "stable" } as React.CSSProperties}
+          className="flex flex-col flex-1 overflow-y-auto sidebar-scroll"
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
           {/* ── Workspace (notifications page) ── */}
           <div className="px-3">

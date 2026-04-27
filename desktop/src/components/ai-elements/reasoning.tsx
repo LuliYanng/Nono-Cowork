@@ -12,7 +12,7 @@ import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import { markdownComponents } from "./markdown-code";
-import { BrainIcon, ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import {
   createContext,
@@ -188,9 +188,6 @@ export const ReasoningTrigger = memo(
       >
         {children ?? (
           <>
-            <div className="flex items-center justify-center w-[24px]">
-              <BrainIcon className="size-3.5 text-muted-foreground/80" />
-            </div>
             <span className="text-[13px] text-muted-foreground/80 transition-colors group-hover/reasoning:text-foreground text-left font-medium">
                {getThinkingMessage(isStreaming, duration)}
             </span>

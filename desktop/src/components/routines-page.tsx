@@ -1,7 +1,44 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Component } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 import { Clock, Zap, FolderOpen, Play, Trash2, CalendarClock, Loader2, Plus, Edit2, AlertTriangle } from "lucide-react";
 import { RoutineEditorDialog } from "./routine-editor-dialog";
 import { toast } from "sonner";
+
+// ── Error Boundary (catches render crashes so we get an error message instead of a blank white screen) ──
+class RoutinesErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[RoutinesPage] Render error:", error, info.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
+          <AlertTriangle className="text-red-500" size={32} />
+          <p className="text-sm font-semibold text-red-500">Render error — check DevTools console for details</p>
+          <pre className="text-xs text-muted-foreground bg-muted rounded p-3 max-w-lg overflow-auto text-left whitespace-pre-wrap">
+            {this.state.error.message}
+            {"\n"}
+            {this.state.error.stack?.split("\n").slice(0, 8).join("\n")}
+          </pre>
+          <button
+            className="text-xs px-3 py-1.5 rounded bg-muted hover:bg-muted/70"
+            onClick={() => this.setState({ error: null })}
+          >
+            Dismiss
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ── Types ──
 
@@ -73,7 +110,7 @@ const TYPE_CONFIG = {
 
 // ── Component ──
 
-export function RoutinesPage() {
+function RoutinesPageInner() {
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [counts, setCounts] = useState({ cron: 0, trigger: 0, file_drop: 0 });
   const [loading, setLoading] = useState(true);
@@ -465,5 +502,13 @@ export function RoutinesPage() {
         onSave={handleSaveRoutine}
       />
     </div>
+  );
+}
+
+export function RoutinesPage() {
+  return (
+    <RoutinesErrorBoundary>
+      <RoutinesPageInner />
+    </RoutinesErrorBoundary>
   );
 }
