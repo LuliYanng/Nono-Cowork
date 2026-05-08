@@ -83,6 +83,15 @@ def run_agent_for_message(user_id: str, user_text: str,
         if sync_ctx:
             logger.info("[%s] Sync context injected:\n%s", channel_name, sync_ctx)
 
+        # Annotate message with current timestamp for agent time-awareness.
+        # Wrapped in <current_time> so the frontend can strip it before display.
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from config import AGENT_TIMEZONE
+        _tz = ZoneInfo(AGENT_TIMEZONE) if AGENT_TIMEZONE else datetime.now().astimezone().tzinfo
+        _ts = datetime.now(_tz).strftime("%Y-%m-%d %H:%M:%S %z").strip()
+        user_text = f"{user_text}\n<current_time>{_ts}</current_time>"
+
         # Build user message content — multimodal when images are attached
         if images:
             user_content = [
@@ -110,18 +119,15 @@ def run_agent_for_message(user_id: str, user_text: str,
             "image_count": len(images) if images else 0,
         })
 
-        # Temporarily inject sync context into the last user message for the LLM call only
+        # Prepend sync context to the user message so the agent sees recent file activity
         if sync_ctx:
-            augmented_text = f"{sync_ctx}\n\n{user_text}"
             if images:
-                # Multimodal: replace the text part, keep images
-                augmented_content = [
-                    {"type": "text", "text": augmented_text},
+                history[-1] = {"role": "user", "content": [
+                    {"type": "text", "text": f"{sync_ctx}\n\n{user_text}"},
                     *[p for p in user_content if p.get("type") == "image_url"],
-                ]
-                history[-1] = {"role": "user", "content": augmented_content}
+                ]}
             else:
-                history[-1] = {"role": "user", "content": augmented_text}
+                history[-1] = {"role": "user", "content": f"{sync_ctx}\n\n{user_text}"}
 
         # Agent event collector
         events = []
@@ -148,25 +154,7 @@ def run_agent_for_message(user_id: str, user_text: str,
 
         # Checkpoint callback: persist session after each agent round so an
         # OOM kill between rounds doesn't lose completed work.
-        # Also strips sync_ctx augmentation from the user message before saving
-        # so it never leaks into the persisted history.
         def _checkpoint(h, stats):
-            if sync_ctx:
-                for msg in h:
-                    if msg.get("role") != "user":
-                        continue
-                    c = msg.get("content")
-                    if images:
-                        if isinstance(c, list) and any(
-                            p.get("type") == "text" and p.get("text") == augmented_text
-                            for p in c
-                        ):
-                            msg["content"] = user_content
-                            break
-                    else:
-                        if c == augmented_text:
-                            msg["content"] = user_text
-                            break
             session["history"] = h
             session["token_stats"] = stats
             sessions.save_session(user_id)
@@ -180,25 +168,6 @@ def run_agent_for_message(user_id: str, user_text: str,
                 model_override=model_override,
                 on_checkpoint=_checkpoint,
             )
-
-            # Restore original user message (strip sync context before persisting)
-            if sync_ctx:
-                for msg in updated_history:
-                    if msg.get("role") != "user":
-                        continue
-                    c = msg.get("content")
-                    if images:
-                        # Multimodal: restore to original content array
-                        if isinstance(c, list) and any(
-                            p.get("type") == "text" and p.get("text") == augmented_text
-                            for p in c
-                        ):
-                            msg["content"] = user_content
-                            break
-                    else:
-                        if c == augmented_text:
-                            msg["content"] = user_text
-                            break
 
             session["history"] = updated_history
             session["token_stats"] = updated_stats

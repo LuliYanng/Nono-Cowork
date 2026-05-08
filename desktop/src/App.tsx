@@ -312,6 +312,11 @@ function convertHistoryToMessages(backendMessages: any[]): { messages: ChatMessa
       } else {
         textContent = msg.content || "";
       }
+      // Strip system-injected tags before display
+      textContent = textContent
+        .replace(/<current_time>[\s\S]*?<\/current_time>/g, "")
+        .replace(/<file_sync_activity>[\s\S]*?<\/file_sync_activity>/g, "")
+        .trim();
       msgs.push({
         id: `hist-${++counter}`,
         role: "user",

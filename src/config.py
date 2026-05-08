@@ -118,6 +118,11 @@ EXA_API_KEY = os.getenv("EXA_API_KEY", "").strip()
 # Set JINA_API_KEY to your key to get the higher tier.
 JINA_API_KEY = os.getenv("JINA_API_KEY", "").strip()
 
+# ── Agent Timezone ──
+# Timezone for timestamps injected into user messages (e.g. "Asia/Shanghai", "UTC").
+# Leave empty to follow the system timezone of the host machine.
+AGENT_TIMEZONE = "Asia/Shanghai"
+
 # ── Agent Work Directory ──
 # Persistent agent workspace: venvs, CLI tools, staging area, and other intermediate
 # artifacts that should NOT be placed inside the Syncthing sync folder.
