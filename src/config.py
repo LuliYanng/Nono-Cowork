@@ -43,7 +43,7 @@ XIAOMI_API_KEY = os.getenv("XIAOMI_API_KEY", "").strip()
 if API_BASE and "/" not in MODEL:
     MODEL = f"openai/{MODEL}"
 
-MAX_ROUNDS = 30
+MAX_ROUNDS = 60
 CONTEXT_LIMIT = 200_000  # Context window limit (used for usage percentage display)
 
 
