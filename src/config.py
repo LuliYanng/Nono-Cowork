@@ -23,8 +23,10 @@ MODEL_REGISTRY: list[dict] = [
     {"id": "openrouter/minimax/minimax-m2.5:free",           "name": "MiniMax M2.5 (Free)",            "provider": "minimax"},
     {"id": "xiaomi/mimo-v2.5-pro",                           "name": "Mimo v2.5 Pro",                  "provider": "xiaomi"},
     {"id": "xiaomi/mimo-v2.5",                               "name": "Mimo v2.5",                      "provider": "xiaomi"},
-    {"id": "openrouter/deepseek/deepseek-v4-pro",            "name": "DeepSeek V4 Pro",                "provider": "deepseek"},
-    {"id": "openrouter/deepseek/deepseek-v4-flash",          "name": "DeepSeek V4 Flash",              "provider": "deepseek"},
+    {"id": "openrouter/deepseek/deepseek-v4-pro",            "name": "DeepSeek V4 Pro(OpenRouter)",    "provider": "deepseek"},
+    {"id": "openrouter/deepseek/deepseek-v4-flash",          "name": "DeepSeek V4 Flash(OpenRouter)",  "provider": "deepseek"},
+    {"id": "deepseek/deepseek-v4-pro",                       "name": "DeepSeek V4 Pro",                "provider": "deepseek"},
+    {"id": "deepseek/deepseek-v4-flash",                     "name": "DeepSeek V4 Flash",              "provider": "deepseek"},
     {"id": "openrouter/z-ai/glm-5.1",                        "name": "Z-AI GLM-5.1",                   "provider": "z-ai"},
     {"id": "openrouter/moonshotai/kimi-k2.6",                "name": "Kimi K2.6",                      "provider": "moonshotai"},
 ]

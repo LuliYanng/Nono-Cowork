@@ -179,7 +179,7 @@ def _build_llm_kwargs(messages: list, model: str = None, tools: list = None) -> 
     # Enable thinking/reasoning for models that support it
     # LiteLLM maps reasoning_effort to Gemini's thinking_level automatically
     # drop_params=True ensures this is safely ignored by models that don't support it
-    _THINKING_PROVIDERS = {"gemini", "anthropic"}
+    _THINKING_PROVIDERS = {"gemini", "anthropic", "deepseek"}
     if _provider in _THINKING_PROVIDERS or _sub_provider in _THINKING_PROVIDERS:
         kwargs["reasoning_effort"] = "medium"  # "low" or "high"; Gemini 3 can't fully disable
 
