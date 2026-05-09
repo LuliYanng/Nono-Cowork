@@ -1676,16 +1676,29 @@ function App() {
       }
     } catch (err) {
       flushRafUpdate();
-      // Show error as assistant message (rendered as red banner + retry)
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: assistantId,
-          role: "assistant",
-          content: `❌ Connection error: ${err instanceof Error ? err.message : "Unknown error"}`,
-          isError: true,
-        },
-      ]);
+      // Show error on the assistant message, preserving any parts already streamed
+      const errorContent = `❌ Connection error: ${err instanceof Error ? err.message : "Unknown error"}`;
+      setMessages((prev) => {
+        const existing = prev.find((m) => m.id === assistantId);
+        if (existing) {
+          // Update existing message — keep parts, add error flag
+          return prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, content: errorContent, isError: true }
+              : m
+          );
+        }
+        // No streamed content yet — append new error message
+        return [
+          ...prev,
+          {
+            id: assistantId,
+            role: "assistant" as const,
+            content: errorContent,
+            isError: true,
+          },
+        ];
+      });
     } finally {
       flushRafUpdate();
       setIsStreaming(false);
@@ -2146,26 +2159,37 @@ function App() {
                           <Message key={msg.id} from={msg.role}>
                             <MessageContent>
                               {msg.role === "assistant" && msg.isError ? (
-                                <div className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">
-                                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                                  <div className="flex min-w-0 flex-1 flex-col gap-2">
-                                    <p className="whitespace-pre-wrap break-words text-foreground">
-                                      {msg.content.replace(/^❌\s*/, "")}
-                                    </p>
-                                    <div>
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => handleRetryError(msg.id)}
-                                        disabled={isStreaming}
-                                        className="h-7 gap-1.5 text-xs"
-                                      >
-                                        <RotateCcw className="h-3 w-3" />
-                                        Retry
-                                      </Button>
+                                <>
+                                  {/* Preserve any content that was already streamed before the error */}
+                                  {msg.parts && msg.parts.length > 0 && (
+                                    <PartsRenderer
+                                      parts={msg.parts}
+                                      isActive={false}
+                                      isStreaming={false}
+                                      defaultCollapsed={false}
+                                    />
+                                  )}
+                                  <div className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">
+                                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                                    <div className="flex min-w-0 flex-1 flex-col gap-2">
+                                      <p className="whitespace-pre-wrap break-words text-foreground">
+                                        {msg.content.replace(/^❌\s*/, "")}
+                                      </p>
+                                      <div>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => handleRetryError(msg.id)}
+                                          disabled={isStreaming}
+                                          className="h-7 gap-1.5 text-xs"
+                                        >
+                                          <RotateCcw className="h-3 w-3" />
+                                          Retry
+                                        </Button>
+                                      </div>
                                     </div>
                                   </div>
-                                </div>
+                                </>
                               ) : msg.role === "assistant" ? (
                                 <>
                                   {msg.reasoning && (!msg.parts || !msg.parts.some(p => p.type === "reasoning")) && (
