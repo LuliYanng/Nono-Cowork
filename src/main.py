@@ -63,6 +63,7 @@ def main():
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
     # Persist ERROR+ logs to a rotating file (max 2 MB × 3 = 6 MB)
     import os as _os
@@ -164,7 +165,7 @@ def main():
         # Kill any stale process occupying the port before binding
         from channels.desktop import _kill_stale_port_holder
         _kill_stale_port_holder(port)
-        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
     else:
         # No Desktop channel → keep the main thread alive
         # so daemon threads (feishu, telegram) continue running.
