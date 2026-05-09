@@ -37,27 +37,78 @@ def _usage_field(usage, name: str, default=0):
 def _sanitize_history(history: list) -> list:
     """Ensure history is valid for the LLM API.
 
-    Fixes two classes of corruption that can result from a crashed/OOM agent run:
+    Fixes five classes of corruption that can result from a crashed/OOM agent run
+    or a user-initiated stop mid-stream:
 
     1. Assistant message with tool_calls but no (or incomplete) tool responses
        → insert placeholder tool responses for missing tool_call_ids.
 
     2. Consecutive user messages with no assistant reply in between
        → insert a placeholder assistant message so the sequence stays valid.
+
+    3. Empty assistant message (content=None AND tool_calls=None/[])
+       → drop it; happens when the user stops the stream before any tokens arrive.
+
+    4. Assistant message with tool_calls containing invalid/partial JSON arguments
+       → drop the assistant and all immediately following tool results for it;
+       happens when the user stops the stream mid-tool-call generation.
+
+    5. Orphan tool result with no preceding assistant+tool_calls context
+       → drop it; any tool message not consumed by the look-ahead in case 1 is
+       by definition orphaned (its parent assistant was dropped or never existed).
     """
+
+    def _tc_args_valid(tc) -> bool:
+        if isinstance(tc, dict):
+            args_str = (tc.get("function") or {}).get("arguments", "")
+        else:
+            fn = getattr(tc, "function", None)
+            args_str = getattr(fn, "arguments", "") if fn else ""
+        try:
+            json.loads(args_str or "{}")
+            return True
+        except (json.JSONDecodeError, ValueError):
+            return False
+
     fixed = []
     i = 0
     while i < len(history):
         msg = history[i]
 
         role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+        content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
         tool_calls = (
             msg.get("tool_calls") if isinstance(msg, dict)
             else getattr(msg, "tool_calls", None)
         )
 
-        # Fix consecutive user messages: insert a placeholder assistant reply
-        # so the LLM API doesn't receive two user messages in a row.
+        # Case 3: Drop empty assistant messages produced by a mid-stream stop.
+        if role == "assistant" and not content and not tool_calls:
+            i += 1
+            continue
+
+        # Case 4: Assistant with tool_calls containing invalid/partial JSON.
+        # Drop it and skip all immediately following tool results.
+        if role == "assistant" and tool_calls and not all(_tc_args_valid(tc) for tc in tool_calls):
+            j = i + 1
+            while j < len(history):
+                nxt = history[j]
+                nxt_role = nxt.get("role") if isinstance(nxt, dict) else getattr(nxt, "role", None)
+                if nxt_role == "tool":
+                    j += 1
+                else:
+                    break
+            i = j
+            continue
+
+        # Case 5: Orphan tool result. Any tool message that reaches the main loop
+        # was not consumed by the look-ahead in case 1, meaning it has no valid
+        # parent assistant message → drop it.
+        if role == "tool":
+            i += 1
+            continue
+
+        # Case 2: Fix consecutive user messages.
         if role == "user" and fixed:
             prev_role = (
                 fixed[-1].get("role") if isinstance(fixed[-1], dict)
@@ -71,6 +122,8 @@ def _sanitize_history(history: list) -> list:
 
         fixed.append(msg)
 
+        # Case 1: Assistant with valid tool_calls — look ahead for tool results,
+        # inserting placeholders for any that are missing.
         if role == "assistant" and tool_calls:
             expected_ids = {tc.id if hasattr(tc, "id") else tc["id"] for tc in tool_calls}
 
