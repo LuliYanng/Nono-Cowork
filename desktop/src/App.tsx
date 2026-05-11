@@ -602,11 +602,13 @@ const PartsRenderer = memo(function PartsRenderer({
   parts,
   isActive,
   isStreaming,
+  sessionId,
   defaultCollapsed: _defaultCollapsed = false,
 }: {
   parts: MessagePart[];
   isActive: boolean;
   isStreaming?: boolean;
+  sessionId: string | null;
   defaultCollapsed?: boolean;
 }) {
   // First pass: build a flat list of typed items (reasoning, text, tool nodes)
@@ -704,7 +706,7 @@ const PartsRenderer = memo(function PartsRenderer({
               fetch(`${API_BASE}/api/command/stop`, {
                 method: "POST",
                 headers: authHeaders({ "Content-Type": "application/json" }),
-                body: JSON.stringify({ scope: "delegate", session_id: currentSessionId }),
+                body: JSON.stringify({ scope: "delegate", session_id: sessionId }),
               }).catch(() => {});
             }}
           >
@@ -909,55 +911,9 @@ function App() {
   // Track which assistant message is actively receiving thought events
   const [thinkingMsgId, setThinkingMsgId] = useState<string | null>(null);
 
-  // ── Multi-session state cache ──
-  // Stores per-session UI state so background sessions can keep streaming
-  // while the user views a different session.
-  interface SessionUIState {
-    messages: ChatMessage[];
-    isStreaming: boolean;
-    isStopping: boolean;
-    statusText: string;
-    animatingMsgId: string | null;
-    thinkingMsgId: string | null;
-    pendingAskUser: typeof pendingAskUser;
-    pendingCredential: typeof pendingCredential;
-    idCounter: number;
-  }
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sessionList, setSessionList] = useState<SessionItem[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-
-  const sessionCacheRef = useRef<Record<string, SessionUIState>>({});
-  const currentSessionIdRef = useRef<string | null>(null);
-
-  // Keep ref in sync — assigned on every render (not useEffect)
-  // so SSE closures always see the latest value without waiting for commit.
-  currentSessionIdRef.current = currentSessionId;
-
-  // Save current React state into the cache for the given session
-  const saveCurrentToCache = useCallback((sid: string) => {
-    sessionCacheRef.current[sid] = {
-      messages, isStreaming, isStopping, statusText,
-      animatingMsgId, thinkingMsgId, pendingAskUser, pendingCredential,
-      idCounter: idCounter.current,
-    };
-  }, [messages, isStreaming, isStopping, statusText, animatingMsgId, thinkingMsgId, pendingAskUser, pendingCredential]);
-
-  // Restore React state from cache for the given session
-  const restoreFromCache = useCallback((sid: string) => {
-    const cached = sessionCacheRef.current[sid];
-    if (!cached) return false;
-    setMessages(cached.messages);
-    setIsStreaming(cached.isStreaming);
-    setIsStopping(cached.isStopping);
-    setStatusText(cached.statusText);
-    setAnimatingMsgId(cached.animatingMsgId);
-    setThinkingMsgId(cached.thinkingMsgId);
-    setPendingAskUser(cached.pendingAskUser);
-    setPendingCredential(cached.pendingCredential);
-    idCounter.current = cached.idCounter;
-    return true;
-  }, []);
   // Workspaces (Phase D — workspace-as-project)
   const [workspaceList, setWorkspaceList] = useState<WorkspaceItem[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
@@ -1033,6 +989,82 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const autoPairAttemptedRef = useRef(false);
   const autoPairRunningRef = useRef(false);
+
+  // ── Multi-session state cache ──
+  interface SessionUIState {
+    messages: ChatMessage[];
+    isStreaming: boolean;
+    isStopping: boolean;
+    statusText: string;
+    animatingMsgId: string | null;
+    thinkingMsgId: string | null;
+    pendingAskUser: typeof pendingAskUser;
+    pendingCredential: typeof pendingCredential;
+    idCounter: number;
+  }
+
+  const sessionCacheRef = useRef<Record<string, SessionUIState>>({});
+  const currentSessionIdRef = useRef<string | null>(null);
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  const chatAbortControllersRef = useRef<Record<string, AbortController>>({});
+  currentSessionIdRef.current = currentSessionId;
+  messagesRef.current = messages;
+
+  const cloneSessionState = useCallback((state: SessionUIState): SessionUIState => ({
+    ...state,
+    messages: [...state.messages],
+  }), []);
+
+  const setActiveSessionId = useCallback((sid: string | null) => {
+    currentSessionIdRef.current = sid;
+    setCurrentSessionId(sid);
+  }, []);
+
+  const stopSessionStream = useCallback((sid: string) => {
+    chatAbortControllersRef.current[sid]?.abort();
+    delete chatAbortControllersRef.current[sid];
+
+    const cache = sessionCacheRef.current[sid];
+    if (cache) {
+      cache.isStopping = true;
+      cache.isStreaming = false;
+      cache.statusText = "";
+      cache.animatingMsgId = null;
+      cache.thinkingMsgId = null;
+    }
+
+    if (currentSessionIdRef.current === sid) {
+      setIsStopping(true);
+      setIsStreaming(false);
+      setStatusText("");
+      setAnimatingMsgId(null);
+      setThinkingMsgId(null);
+    }
+  }, []);
+
+  const saveCurrentToCache = useCallback((sid: string) => {
+    sessionCacheRef.current[sid] = {
+      messages: [...messagesRef.current], isStreaming, isStopping, statusText,
+      animatingMsgId, thinkingMsgId, pendingAskUser, pendingCredential,
+      idCounter: idCounter.current,
+    };
+  }, [isStreaming, isStopping, statusText, animatingMsgId, thinkingMsgId, pendingAskUser, pendingCredential]);
+
+  const restoreFromCache = useCallback((sid: string) => {
+    const cached = sessionCacheRef.current[sid];
+    if (!cached) return false;
+    const snapshot = cloneSessionState(cached);
+    setMessages(snapshot.messages);
+    setIsStreaming(cached.isStreaming);
+    setIsStopping(cached.isStopping);
+    setStatusText(cached.statusText);
+    setAnimatingMsgId(cached.animatingMsgId);
+    setThinkingMsgId(cached.thinkingMsgId);
+    setPendingAskUser(cached.pendingAskUser);
+    setPendingCredential(cached.pendingCredential);
+    idCounter.current = cached.idCounter;
+    return true;
+  }, [cloneSessionState]);
 
   const autoPairSyncthing = useCallback(async () => {
     if (autoPairAttemptedRef.current || autoPairRunningRef.current) return;
@@ -1234,24 +1266,25 @@ function App() {
 
   // Switch to a different conversation (multi-session: does NOT stop background streams)
   const handleSwitchSession = useCallback(async (sessionId: string) => {
-    if (sessionId === currentSessionId) return;
+    const previousSessionId = currentSessionIdRef.current;
+    if (sessionId === previousSessionId) return;
 
     // Save current session state to cache before switching.
     // Skip if the cache already exists and is streaming — the SSE loop
     // keeps it up-to-date, and React state may be one render behind.
-    if (currentSessionId) {
-      const existing = sessionCacheRef.current[currentSessionId];
+    if (previousSessionId) {
+      const existing = sessionCacheRef.current[previousSessionId];
       if (!existing || !existing.isStreaming) {
-        saveCurrentToCache(currentSessionId);
+        saveCurrentToCache(previousSessionId);
       }
     }
 
     // Immediately update highlight + ref (ref must be set before next SSE tick)
-    setCurrentSessionId(sessionId);
-    currentSessionIdRef.current = sessionId;
+    setActiveSessionId(sessionId);
 
     // Try to restore from cache first (instant switch for already-loaded sessions)
     if (restoreFromCache(sessionId)) {
+      setLoadingSession(false);
       // Still notify the backend of the switch (for active pointer)
       fetch(`${API_BASE}/api/sessions/${sessionId}/switch`, {
         method: "PUT",
@@ -1285,8 +1318,24 @@ function App() {
       const data = await res.json();
       const { messages: msgs, counter } = convertHistoryToMessages(data.messages || []);
 
+      sessionCacheRef.current[sessionId] = {
+        messages: msgs,
+        isStreaming: data.is_running || false,
+        isStopping: false,
+        statusText: "",
+        animatingMsgId: null,
+        thinkingMsgId: null,
+        pendingAskUser: null,
+        pendingCredential: null,
+        idCounter: counter,
+      };
+
+      if (currentSessionIdRef.current !== sessionId) {
+        return;
+      }
+
       idCounter.current = counter;
-      setMessages(msgs);
+      setMessages([...msgs]);
       setIsStreaming(data.is_running || false);
       if (data.workspace_id) setActiveWorkspaceId(data.workspace_id);
       refreshStatus();
@@ -1295,9 +1344,11 @@ function App() {
     } catch {
       // ignore
     } finally {
-      setLoadingSession(false);
+      if (currentSessionIdRef.current === sessionId) {
+        setLoadingSession(false);
+      }
     }
-  }, [currentSessionId, saveCurrentToCache, restoreFromCache, refreshStatus, fetchSessions, fetchWorkspaces]);
+  }, [saveCurrentToCache, restoreFromCache, setActiveSessionId, refreshStatus, fetchSessions, fetchWorkspaces]);
 
   // ── Notifications ──
 
@@ -1566,10 +1617,10 @@ function App() {
   ) => {
     const text = (overrideText ?? inputRef.current).trim();
     const hasImages = attachedImages && attachedImages.length > 0;
-    if ((!text && !hasImages) || isStreaming) return;
+    if (!text && !hasImages) return;
 
     // Capture the session this message belongs to
-    const streamSessionId = currentSessionId;
+    const streamSessionId = currentSessionIdRef.current;
     if (!streamSessionId) return;
 
     // Session-aware state updaters: update cache always, React state only if active
@@ -1577,17 +1628,18 @@ function App() {
     const getCache = () => {
       if (!sessionCacheRef.current[streamSessionId]) {
         sessionCacheRef.current[streamSessionId] = {
-          messages: [], isStreaming: false, isStopping: false,
+          messages: isActive() ? [...messagesRef.current] : [], isStreaming: false, isStopping: false,
           statusText: "", animatingMsgId: null, thinkingMsgId: null,
           pendingAskUser: null, pendingCredential: null, idCounter: idCounter.current,
         };
       }
       return sessionCacheRef.current[streamSessionId];
     };
+    if (getCache().isStreaming) return;
 
     const sessionSetMessages = (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
       const cache = getCache();
-      cache.messages = typeof updater === "function" ? updater(cache.messages) : updater;
+      cache.messages = typeof updater === "function" ? updater([...cache.messages]) : [...updater];
       if (isActive()) setMessages([...cache.messages]);
     };
     const sessionSetIsStreaming = (v: boolean) => {
@@ -1619,9 +1671,6 @@ function App() {
       if (isActive()) setPendingCredential(v);
     };
 
-    // Initialize cache with current messages
-    getCache().messages = [...messages];
-
     // Add user message (with image thumbnails for display)
     const userMsg: ChatMessage = {
       id: nextId(),
@@ -1640,6 +1689,9 @@ function App() {
     const assistantId = nextId();
     const currentParts: MessagePart[] = [];
     let assistantContent = "";
+    const controller = new AbortController();
+    chatAbortControllersRef.current[streamSessionId]?.abort();
+    chatAbortControllersRef.current[streamSessionId] = controller;
 
     const updateMsg = (patch: Partial<ChatMessage>) => {
       sessionSetMessages((prev) => {
@@ -1696,9 +1748,18 @@ function App() {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(chatBody),
+        signal: controller.signal,
       });
 
       if (!res.ok) {
+        if (res.status === 409) {
+          sessionSetMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
+          if (isActive()) {
+            setInput(text);
+            toast.warning("This chat is still stopping. Try again in a moment.");
+          }
+          return;
+        }
         throw new Error(`HTTP ${res.status}`);
       }
 
@@ -1796,6 +1857,9 @@ function App() {
       }
     } catch (err) {
       flushRafUpdate();
+      if (controller.signal.aborted) {
+        return;
+      }
       const errorContent = `❌ Connection error: ${err instanceof Error ? err.message : "Unknown error"}`;
       sessionSetMessages((prev) => {
         const existing = prev.find((m) => m.id === assistantId);
@@ -1819,6 +1883,9 @@ function App() {
       });
     } finally {
       flushRafUpdate();
+      if (chatAbortControllersRef.current[streamSessionId] === controller) {
+        delete chatAbortControllersRef.current[streamSessionId];
+      }
       sessionSetIsStreaming(false);
       sessionSetIsStopping(false);
       sessionSetPendingAskUser(null);
@@ -1839,7 +1906,7 @@ function App() {
       scheduleStatusRefreshBurst();
       fetchSessions();
     }
-  }, [isStreaming, currentSessionId, messages, nextId, refreshStatus, scheduleStatusRefreshBurst, fetchSessions]);
+  }, [nextId, refreshStatus, scheduleStatusRefreshBurst, fetchSessions]);
 
 
   // PromptInput onSubmit handler — receives { text, files } from the component
@@ -1910,7 +1977,7 @@ function App() {
             setThinkingMsgId(null);
             setPendingAskUser(null);
             setPendingCredential(null);
-            setCurrentSessionId(null);
+            setActiveSessionId(null);
             setActiveWorkspaceId(wsId);
             setActiveView("chat");
             fetch(`${API_BASE}/api/sessions`, {
@@ -1920,7 +1987,7 @@ function App() {
             })
               .then((r) => r.json())
               .then((data) => {
-                if (data.session_id) setCurrentSessionId(data.session_id);
+                if (data.session_id) setActiveSessionId(data.session_id);
                 if (data.workspace_id) setActiveWorkspaceId(data.workspace_id);
                 refreshStatus();
                 fetchSessions();
@@ -1980,7 +2047,7 @@ function App() {
             setThinkingMsgId(null);
             setPendingAskUser(null);
             setPendingCredential(null);
-            setCurrentSessionId(null);
+            setActiveSessionId(null);
 
             // Fire server request in background — don't block UI
             fetch(`${API_BASE}/api/sessions`, {
@@ -1992,7 +2059,7 @@ function App() {
             })
               .then((r) => r.json())
               .then((data) => {
-                if (data.session_id) setCurrentSessionId(data.session_id);
+                if (data.session_id) setActiveSessionId(data.session_id);
                 if (data.workspace_id) setActiveWorkspaceId(data.workspace_id);
                 refreshStatus();
                 fetchSessions();
@@ -2182,13 +2249,14 @@ function App() {
                         status={isStopping ? "submitted" : isStreaming ? "streaming" : "ready"}
                         onStop={() => {
                           if (isStopping) return;
-                          setIsStopping(true);
                           if (currentSessionId) {
+                            stopSessionStream(currentSessionId);
                             fetch(`${API_BASE}/api/sessions/${currentSessionId}/stop`, {
                               method: "POST",
                               headers: authHeaders(),
                             }).catch(() => {});
                           } else {
+                            setIsStopping(true);
                             fetch(`${API_BASE}/api/command/stop`, {
                               method: "POST",
                               headers: authHeaders({ "Content-Type": "application/json" }),
@@ -2324,6 +2392,7 @@ function App() {
                                       parts={msg.parts}
                                       isActive={false}
                                       isStreaming={false}
+                                      sessionId={currentSessionId}
                                       defaultCollapsed={false}
                                     />
                                   )}
@@ -2364,6 +2433,7 @@ function App() {
                                       parts={msg.parts}
                                       isActive={msg.id === thinkingMsgId}
                                       isStreaming={isStreaming}
+                                      sessionId={currentSessionId}
                                       defaultCollapsed={msg.id.startsWith("hist-")}
                                     />
                                   )}
@@ -2605,13 +2675,14 @@ function App() {
                           status={isStopping ? "submitted" : isStreaming ? "streaming" : "ready"}
                           onStop={() => {
                             if (isStopping) return;
-                            setIsStopping(true);
                             if (currentSessionId) {
+                              stopSessionStream(currentSessionId);
                               fetch(`${API_BASE}/api/sessions/${currentSessionId}/stop`, {
                                 method: "POST",
                                 headers: authHeaders(),
                               }).catch(() => {});
                             } else {
+                              setIsStopping(true);
                               fetch(`${API_BASE}/api/command/stop`, {
                                 method: "POST",
                                 headers: authHeaders({ "Content-Type": "application/json" }),
@@ -2660,7 +2731,7 @@ function App() {
         setActiveView("chat");
         setMessages([]);
         setIsStopping(false);
-        setCurrentSessionId(null);
+        setActiveSessionId(null);
         setOnboardingOpen(false);
         setOnboardingDismissed(true);
         fetchWorkspaces();
@@ -2672,7 +2743,7 @@ function App() {
         })
           .then((r) => r.json())
           .then((data) => {
-            if (data.session_id) setCurrentSessionId(data.session_id);
+            if (data.session_id) setActiveSessionId(data.session_id);
             refreshStatus();
             fetchSessions();
           })
@@ -2691,7 +2762,7 @@ function App() {
         setActiveView("chat");
         setMessages([]);
         setIsStopping(false);
-        setCurrentSessionId(null);
+        setActiveSessionId(null);
         fetchWorkspaces();
         fetch(`${API_BASE}/api/sessions`, {
           method: "POST",
@@ -2700,7 +2771,7 @@ function App() {
         })
           .then((r) => r.json())
           .then((data) => {
-            if (data.session_id) setCurrentSessionId(data.session_id);
+            if (data.session_id) setActiveSessionId(data.session_id);
             refreshStatus();
             fetchSessions();
           })

@@ -397,6 +397,12 @@ async def chat(request: Request):
         if not session:
             return JSONResponse({"error": f"Session '{session_id}' not found"}, status_code=404)
 
+    if sessions.is_session_running(session_id):
+        return JSONResponse(
+            {"error": "Session is already running. Stop it and wait for it to finish before sending another message."},
+            status_code=409,
+        )
+
     # Use session_id as the event queue key
     q = channel._get_queue(session_id)
     # Clear any leftover events from a previous completed request on this session
