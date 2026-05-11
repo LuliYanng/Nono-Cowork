@@ -16,7 +16,8 @@ def run_agent_for_message(user_id: str, user_text: str,
                           channel_name: str = "unknown",
                           on_event_hook=None,
                           channel_user_id: str | None = None,
-                          images: list[dict] | None = None):
+                          images: list[dict] | None = None,
+                          session_id: str | None = None):
     """
     Run Agent in the calling thread and reply via callback functions.
 
@@ -32,32 +33,56 @@ def run_agent_for_message(user_id: str, user_text: str,
         on_event_hook: Optional callback for structured agent events: on_event_hook(evt)
         images: Optional list of image dicts [{"data": "data:image/png;base64,...", "filename": "..."}]
                 for multimodal LLM input
+        session_id: Explicit session ID for multi-session support.
+                    When None, uses the user's active session (IM channel compat).
     """
     from core.agent import agent_loop
     from logger import log_event
 
-    lock = sessions.get_lock(user_id)
+    # Resolve the session and its lock
+    if session_id:
+        lock = sessions.get_session_lock(session_id)
+        session = sessions.get_session(session_id) or sessions.ensure_session_loaded(user_id, session_id)
+    else:
+        lock = sessions.get_lock(user_id)
+        session = None  # Will be resolved via get_or_create below
 
-    # Prevent concurrent execution for the same user
+    # Prevent concurrent execution on the SAME session
     if not lock.acquire(blocking=False):
         reply_func("⏳ The previous task is still running. Please wait for it to finish.")
         return
 
     # Set execution context so tools can access user_id, channel_name, and callbacks
     channel_user_id = channel_user_id or user_id
+    resolved_session_id = session_id or (session["session_id"] if session else None)
     set_context(user_id=user_id, channel_name=channel_name,
-                check_stop=lambda: sessions.is_stopped(user_id),
+                check_stop=lambda: sessions.is_stopped(user_id, session_id=resolved_session_id),
                 status_func=status_func,
                 subagent_check_stop=lambda: (
-                    sessions.is_subagent_stopped(user_id) or sessions.is_stopped(user_id)
+                    sessions.is_subagent_stopped(user_id, session_id=resolved_session_id)
+                    or sessions.is_stopped(user_id, session_id=resolved_session_id)
                 ),
-                channel_user_id=channel_user_id)
+                channel_user_id=channel_user_id,
+                session_id=resolved_session_id)
 
     # Clear any previous stop flag before starting
-    sessions.clear_stop(user_id)
+    sessions.clear_stop(user_id, session_id=resolved_session_id)
 
     try:
-        session = sessions.get_or_create(user_id)
+        if not session:
+            session = sessions.get_or_create(user_id)
+            resolved_session_id = session["session_id"]
+            # Update context with resolved session_id
+            set_context(user_id=user_id, channel_name=channel_name,
+                        check_stop=lambda: sessions.is_stopped(user_id, session_id=resolved_session_id),
+                        status_func=status_func,
+                        subagent_check_stop=lambda: (
+                            sessions.is_subagent_stopped(user_id, session_id=resolved_session_id)
+                            or sessions.is_stopped(user_id, session_id=resolved_session_id)
+                        ),
+                        channel_user_id=channel_user_id,
+                        session_id=resolved_session_id)
+
         history = session["history"]
         token_stats = session["token_stats"]
         log_file = session["log_file"]  # Session-level log file
@@ -108,9 +133,9 @@ def run_agent_for_message(user_id: str, user_text: str,
         # Append ORIGINAL user message to history (this is what gets persisted & shown in frontend)
         history.append({"role": "user", "content": user_content})
         # Update last_active only when user actually sends a message
-        sessions.touch_session(user_id)
+        sessions.touch_session(user_id, session_id=resolved_session_id)
         # Persist user message immediately so an OOM kill can't erase it
-        sessions.save_session(user_id)
+        sessions.save_session(user_id, session_id=resolved_session_id)
         # Log the original text to session log file
         log_event(log_file, {
             "type": f"{channel_name}_message",
@@ -150,14 +175,14 @@ def run_agent_for_message(user_id: str, user_text: str,
 
         # Stop checker: agent_loop calls this to check if /stop was requested
         def check_stop():
-            return sessions.is_stopped(user_id)
+            return sessions.is_stopped(user_id, session_id=resolved_session_id)
 
         # Checkpoint callback: persist session after each agent round so an
         # OOM kill between rounds doesn't lose completed work.
         def _checkpoint(h, stats):
             session["history"] = h
             session["token_stats"] = stats
-            sessions.save_session(user_id)
+            sessions.save_session(user_id, session_id=resolved_session_id)
 
         # Run Agent
         try:
@@ -173,10 +198,12 @@ def run_agent_for_message(user_id: str, user_text: str,
             session["token_stats"] = updated_stats
 
             # Persist session to disk after each interaction
-            sessions.save_session(user_id)
+            sessions.save_session(user_id, session_id=resolved_session_id)
 
             if pending_cache_backfills:
                 from core.llm import await_openrouter_cache_info
+
+                _backfill_sid = resolved_session_id
 
                 def _backfill_cache_usage():
                     total_cached = 0
@@ -193,7 +220,8 @@ def run_agent_for_message(user_id: str, user_text: str,
                         total_written += recovered.get("cache_creation_tokens", 0) or 0
 
                     if total_cached or total_written:
-                        sessions.apply_cache_backfill(user_id, total_cached, total_written)
+                        sessions.apply_cache_backfill(user_id, total_cached, total_written,
+                                                      session_id=_backfill_sid)
                         log_event(log_file, {
                             "type": "cache_backfill",
                             "cached_tokens": total_cached,
@@ -204,7 +232,7 @@ def run_agent_for_message(user_id: str, user_text: str,
                 threading.Thread(target=_backfill_cache_usage, daemon=True).start()
 
             # Check if we were stopped
-            was_stopped = sessions.is_stopped(user_id)
+            was_stopped = sessions.is_stopped(user_id, session_id=resolved_session_id)
 
             # Extract final reply
             final_reply = ""

@@ -33,6 +33,7 @@ export interface SessionItem {
   message_count: number;
   preview: string;
   is_current: boolean;
+  is_running?: boolean;
 }
 
 export interface WorkspaceItem {
@@ -394,13 +395,16 @@ export function Sidebar({
                                     if (!isCurrent) onSelectSession(s.id);
                                     onViewChange("chat");
                                   }}
-                                  className={`w-full text-left px-3 py-1.5 rounded-lg text-[12.5px] truncate transition-colors pr-8 ${
+                                  className={`w-full text-left px-3 py-1.5 rounded-lg text-[12.5px] truncate transition-colors pr-8 flex items-center gap-1.5 ${
                                     isCurrent && activeView === "chat"
                                       ? "bg-sidebar-accent text-sidebar-foreground/90"
                                       : "text-sidebar-foreground/55 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80"
                                   }`}
                                 >
-                                  {s.preview || "New conversation"}
+                                  {s.is_running && (
+                                    <span className="inline-block size-1.5 rounded-full bg-blue-500 animate-pulse flex-shrink-0" />
+                                  )}
+                                  <span className="truncate">{s.preview || "New conversation"}</span>
                                 </button>
                                 {onDeleteSession && hoveredId === s.id && !isCurrent && (
                                   <button

@@ -47,14 +47,18 @@ VPS_SYNC_PARENT = _pathlib.Path.home() / "NonoWorkspaces"
 
 
 class DesktopChannel(Channel):
-    """HTTP + SSE channel for the Electron desktop client."""
+    """HTTP + SSE channel for the Electron desktop client.
+
+    Event queues, ask_user, and credential_request are all keyed by
+    session_id to support multiple concurrent sessions.
+    """
 
     name = "desktop"
 
     def __init__(self):
-        self._event_queues: dict[str, queue.Queue] = {}
+        self._event_queues: dict[str, queue.Queue] = {}  # session_id → Queue
         self._queue_lock = threading.Lock()
-        # ask_user support: per-user answer slot + event signal
+        # ask_user support: per-session answer slot + event signal
         self._ask_user_events: dict[str, threading.Event] = {}
         self._ask_user_answers: dict[str, str] = {}
         self._ask_user_lock = threading.Lock()
@@ -63,17 +67,23 @@ class DesktopChannel(Channel):
         self._credential_answers: dict[str, str] = {}
         self._credential_lock = threading.Lock()
 
-    def _get_queue(self, user_id: str) -> queue.Queue:
-        """Get or create an event queue for a user."""
+    def _get_queue(self, session_id: str) -> queue.Queue:
+        """Get or create an event queue for a session."""
         with self._queue_lock:
-            if user_id not in self._event_queues:
-                self._event_queues[user_id] = queue.Queue()
-            return self._event_queues[user_id]
+            if session_id not in self._event_queues:
+                self._event_queues[session_id] = queue.Queue()
+            return self._event_queues[session_id]
 
-    def _push_event(self, user_id: str, event_type: str, data: dict):
-        """Push an SSE event to the user's queue."""
-        q = self._get_queue(user_id)
+    def _push_event(self, session_id: str, event_type: str, data: dict):
+        """Push an SSE event to a session's queue."""
+        q = self._get_queue(session_id)
         q.put({"event": event_type, "data": json.dumps(data, ensure_ascii=False)})
+
+    def _current_session_id(self) -> str | None:
+        """Get session_id from the calling thread's execution context."""
+        from context import get_context
+        ctx = get_context()
+        return ctx.get("session_id")
 
     # ── Channel interface implementation ──
 
@@ -83,46 +93,52 @@ class DesktopChannel(Channel):
 
     def send_reply(self, user_id: str, text: str):
         """Send the Agent's final reply."""
-        self._push_event(user_id, "reply", {"text": text})
+        sid = self._current_session_id() or user_id
+        self._push_event(sid, "reply", {"text": text})
 
     def send_status(self, user_id: str, text: str):
         """Send a status update."""
-        self._push_event(user_id, "status", {"text": text})
+        sid = self._current_session_id() or user_id
+        self._push_event(sid, "status", {"text": text})
 
     def ask_user(self, questions: list[dict]) -> str:
         """Block the agent thread, push question(s) via SSE, wait for the user's answer."""
-        user_id = DESKTOP_USER_ID
+        sid = self._current_session_id()
+        if not sid:
+            return "[No active session]"
+
         evt = threading.Event()
         with self._ask_user_lock:
-            self._ask_user_events[user_id] = evt
-            self._ask_user_answers.pop(user_id, None)
+            self._ask_user_events[sid] = evt
+            self._ask_user_answers.pop(sid, None)
 
-        self._push_event(user_id, "ask_user", {"questions": questions})
+        self._push_event(sid, "ask_user", {"questions": questions})
 
         from core.session import sessions
         while not evt.wait(timeout=1.0):
-            if sessions.is_stopped(user_id):
+            if sessions.is_stopped(DESKTOP_USER_ID, session_id=sid):
                 with self._ask_user_lock:
-                    self._ask_user_events.pop(user_id, None)
+                    self._ask_user_events.pop(sid, None)
                 return "[User stopped the task]"
 
         with self._ask_user_lock:
-            self._ask_user_events.pop(user_id, None)
-            return self._ask_user_answers.pop(user_id, "")
+            self._ask_user_events.pop(sid, None)
+            return self._ask_user_answers.pop(sid, "")
 
-    def submit_ask_reply(self, user_id: str, answer: str):
+    def submit_ask_reply(self, session_id: str, answer: str):
         """Called by /api/ask-reply to unblock a waiting ask_user."""
         with self._ask_user_lock:
-            evt = self._ask_user_events.get(user_id)
+            evt = self._ask_user_events.get(session_id)
             if not evt:
                 return False
-            self._ask_user_answers[user_id] = answer
+            self._ask_user_answers[session_id] = answer
             evt.set()
             return True
 
     def show_widget(self, html: str, title: str = "", height: int = 420):
         """Push a widget SSE event — non-blocking, fire-and-forget."""
-        self._push_event(DESKTOP_USER_ID, "widget", {
+        sid = self._current_session_id() or DESKTOP_USER_ID
+        self._push_event(sid, "widget", {
             "html": html,
             "title": title,
             "height": height,
@@ -130,13 +146,16 @@ class DesktopChannel(Channel):
 
     def credential_request(self, key_name: str, service_name: str, service_description: str) -> str:
         """Block the agent thread, push credential request via SSE, wait for user input."""
-        user_id = DESKTOP_USER_ID
+        sid = self._current_session_id()
+        if not sid:
+            return "[No active session]"
+
         evt = threading.Event()
         with self._credential_lock:
-            self._credential_events[user_id] = evt
-            self._credential_answers.pop(user_id, None)
+            self._credential_events[sid] = evt
+            self._credential_answers.pop(sid, None)
 
-        self._push_event(user_id, "credential_request", {
+        self._push_event(sid, "credential_request", {
             "key_name": key_name,
             "service_name": service_name,
             "service_description": service_description,
@@ -144,14 +163,14 @@ class DesktopChannel(Channel):
 
         from core.session import sessions
         while not evt.wait(timeout=1.0):
-            if sessions.is_stopped(user_id):
+            if sessions.is_stopped(DESKTOP_USER_ID, session_id=sid):
                 with self._credential_lock:
-                    self._credential_events.pop(user_id, None)
+                    self._credential_events.pop(sid, None)
                 return "[User stopped the task]"
 
         with self._credential_lock:
-            self._credential_events.pop(user_id, None)
-            result = self._credential_answers.pop(user_id, "")
+            self._credential_events.pop(sid, None)
+            result = self._credential_answers.pop(sid, "")
 
         if result == "(skipped)":
             return f"User skipped providing {key_name}."
@@ -160,56 +179,57 @@ class DesktopChannel(Channel):
         set_credential(key_name, result)
         return f"✓ {key_name} has been saved securely."
 
-    def submit_credential_reply(self, user_id: str, value: str):
+    def submit_credential_reply(self, session_id: str, value: str):
         """Called by /api/credential-submit to unblock a waiting credential_request."""
         with self._credential_lock:
-            evt = self._credential_events.get(user_id)
+            evt = self._credential_events.get(session_id)
             if not evt:
                 return False
-            self._credential_answers[user_id] = value
+            self._credential_answers[session_id] = value
             evt.set()
             return True
 
-    def dispatch_and_stream(self, user_id: str, user_text: str, images: list[dict] | None = None):
+    def dispatch_and_stream(self, user_id: str, user_text: str,
+                            session_id: str | None = None,
+                            images: list[dict] | None = None):
         """Dispatch the message and signal 'done' when the agent finishes.
 
         This overrides the base dispatch to add a 'done' event at the end
         and to capture on_event callbacks for richer SSE streaming.
 
         Args:
+            session_id: Target session (for multi-session support).
             images: Optional list of image dicts for multimodal input.
                     Each dict: {"data": "data:image/...;base64,...", "filename": "..."}
         """
         from core.agent_runner import run_agent_for_message
 
+        # Use session_id for event routing
+        evt_key = session_id or user_id
+
         def reply_func(text):
-            self.send_reply(user_id, text)
+            self._push_event(evt_key, "reply", {"text": text})
 
         def status_func(text):
-            self.send_status(user_id, text)
+            self._push_event(evt_key, "status", {"text": text})
 
         # Forward structured agent events as SSE events
         def event_hook(evt):
             evt_type = evt.get("type")
             if evt_type == "text_chunk":
-                # Streaming text chunk — forward immediately for real-time display
-                self._push_event(user_id, "text_chunk", {
+                self._push_event(evt_key, "text_chunk", {
                     "content": evt.get("content", ""),
                 })
             elif evt_type == "reasoning_chunk":
-                # Streaming reasoning chunk
-                self._push_event(user_id, "reasoning_chunk", {
+                self._push_event(evt_key, "reasoning_chunk", {
                     "content": evt.get("content", ""),
                 })
             elif evt_type == "reasoning":
-                # Full reasoning (for non-streaming consumers) — skip for desktop
-                # (desktop already received reasoning_chunk events)
                 pass
             elif evt_type == "narration":
-                # Skip — narration text was already delivered via text_chunk events
                 pass
             elif evt_type == "tool_call":
-                self._push_event(user_id, "thought", {
+                self._push_event(evt_key, "thought", {
                     "type": "tool_call",
                     "tool_name": evt.get("tool_name", ""),
                     "args": evt.get("args", {}),
@@ -217,11 +237,10 @@ class DesktopChannel(Channel):
                     "round": evt.get("round"),
                 })
             elif evt_type == "tool_result":
-                # Truncate large results for SSE transport
                 result = evt.get("result", "")
                 if len(result) > 500:
                     result = result[:500] + f"… ({len(result)} chars)"
-                self._push_event(user_id, "thought", {
+                self._push_event(evt_key, "thought", {
                     "type": "tool_result",
                     "tool_name": evt.get("tool_name", ""),
                     "result": result,
@@ -237,25 +256,26 @@ class DesktopChannel(Channel):
             handler = SLASH_COMMANDS.get(cmd_name)
             if handler:
                 handler[0](self, user_id, cmd_args)
-                self._push_event(user_id, "done", {})
+                self._push_event(evt_key, "done", {})
                 return
         elif user_text_stripped.lower() in ("reset", "help"):
             handler = SLASH_COMMANDS.get(user_text_stripped.lower())
             if handler:
                 handler[0](self, user_id, "")
-                self._push_event(user_id, "done", {})
+                self._push_event(evt_key, "done", {})
                 return
 
         # Run agent (blocking in this thread)
-        self.send_status(user_id, "Thinking...")
+        self._push_event(evt_key, "status", {"text": "Thinking..."})
         run_agent_for_message(
             user_id, user_text_stripped,
             reply_func, status_func,
             channel_name=self.name,
             on_event_hook=event_hook,
             images=images or None,
+            session_id=session_id,
         )
-        self._push_event(user_id, "done", {})
+        self._push_event(evt_key, "done", {})
 
 
 # ── Token Authentication ──
@@ -349,12 +369,17 @@ async def status():
 async def chat(request: Request):
     """Send a message and stream back events via SSE.
 
-    Request body: {"message": "user text here", "images": [{"data": "data:...", "filename": "..."}]}
+    Request body: {
+        "message": "user text here",
+        "session_id": "optional — target session",
+        "images": [{"data": "data:...", "filename": "..."}]
+    }
     Returns: SSE stream with events: status, reply, done
     """
     body = await request.json()
     message = body.get("message", "").strip()
-    images = body.get("images") or None  # list of {"data": "data:image/...;base64,...", "filename": "..."}
+    session_id = body.get("session_id") or None
+    images = body.get("images") or None
     if not message and not images:
         return JSONResponse({"error": "empty message"}, status_code=400)
     if not message and images:
@@ -362,8 +387,19 @@ async def chat(request: Request):
 
     user_id = DESKTOP_USER_ID
 
-    # Clear any leftover events from previous request
-    q = channel._get_queue(user_id)
+    # Resolve session — if no session_id given, use the active session
+    if not session_id:
+        active_session = sessions.get_or_create(user_id)
+        session_id = active_session["session_id"]
+    else:
+        # Ensure the target session is loaded into memory
+        session = sessions.ensure_session_loaded(user_id, session_id)
+        if not session:
+            return JSONResponse({"error": f"Session '{session_id}' not found"}, status_code=404)
+
+    # Use session_id as the event queue key
+    q = channel._get_queue(session_id)
+    # Clear any leftover events from a previous completed request on this session
     while not q.empty():
         try:
             q.get_nowait()
@@ -374,7 +410,7 @@ async def chat(request: Request):
     thread = threading.Thread(
         target=channel.dispatch_and_stream,
         args=(user_id, message),
-        kwargs={"images": images},
+        kwargs={"session_id": session_id, "images": images},
         daemon=True,
     )
     thread.start()
@@ -386,20 +422,15 @@ async def chat(request: Request):
 
         while True:
             try:
-                # IMPORTANT: q.get() is blocking — must run in executor
-                # to avoid blocking the asyncio event loop (which causes
-                # SSE connection drops and "stuck on thinking" in the UI).
                 event = await loop.run_in_executor(
                     None, lambda: q.get(timeout=0.5)
                 )
             except queue.Empty:
-                # No event yet — send heartbeat to keep SSE alive
                 yield {"comment": "heartbeat"}
                 continue
 
             yield event
 
-            # Stop streaming after 'done' event
             if event.get("event") == "done":
                 break
 
@@ -410,11 +441,16 @@ async def chat(request: Request):
 async def ask_reply(request: Request):
     """Submit an answer to a pending ask_user question.
 
-    Request body: {"answer": "user's reply text"}
+    Request body: {"answer": "user's reply text", "session_id": "..."}
     """
     body = await request.json()
     answer = body.get("answer", "")
-    ok = channel.submit_ask_reply(DESKTOP_USER_ID, answer)
+    session_id = body.get("session_id", "")
+    if not session_id:
+        # Fallback: try active session
+        status = sessions.get_status(DESKTOP_USER_ID)
+        session_id = status["session_id"] if status else ""
+    ok = channel.submit_ask_reply(session_id, answer)
     if not ok:
         return JSONResponse({"error": "No pending question"}, status_code=409)
     return {"status": "ok"}
@@ -425,7 +461,11 @@ async def credential_submit(request: Request):
     """Submit an API key from the credential input card."""
     body = await request.json()
     value = body.get("value", "")
-    ok = channel.submit_credential_reply(DESKTOP_USER_ID, value)
+    session_id = body.get("session_id", "")
+    if not session_id:
+        status = sessions.get_status(DESKTOP_USER_ID)
+        session_id = status["session_id"] if status else ""
+    ok = channel.submit_credential_reply(session_id, value)
     if not ok:
         return JSONResponse({"error": "No pending credential request"}, status_code=409)
     return {"status": "ok"}
@@ -469,15 +509,13 @@ async def list_sessions(workspace_id: str | None = None):
     active_id = status["session_id"] if status else None
 
     # Resolve fallback workspace for sessions missing workspace_id.
-    # Uses the soft fallback (default → most-recently-active) so orphan
-    # sessions always render under *some* workspace group, even before
-    # the user has chosen a real default via onboarding.
     from core.workspace import workspaces as _workspaces
     fallback_ws = _workspaces.get_any_fallback()
     fallback_ws_id = fallback_ws["id"] if fallback_ws else None
 
     for s in saved:
         s["is_current"] = (s["id"] == active_id)
+        # is_running is already set by list_sessions()
         if not s.get("workspace_id"):
             s["workspace_id"] = fallback_ws_id
 
@@ -489,16 +527,15 @@ async def list_sessions(workspace_id: str | None = None):
 
 @app.post("/api/sessions")
 async def create_session(request: Request):
-    """Archive the current session and start a new one.
+    """Create a new session alongside existing ones (multi-session).
 
     Body (optional): { workspace_id: str } — bind the new session to
     a specific workspace. When omitted, inherits from the previous
     session or falls back to the default workspace.
 
-    Refuses if an agent is still running — otherwise reset() would close
-    the log file out from under the running thread and crash it.
+    Does NOT archive or stop any running session — other sessions
+    continue running in the background.
     """
-    # Accept optional body without failing when empty
     workspace_id: str | None = None
     try:
         if request.headers.get("content-length", "0") != "0":
@@ -510,20 +547,10 @@ async def create_session(request: Request):
     except Exception:
         workspace_id = None
 
-    lock = sessions.get_lock(DESKTOP_USER_ID)
-    if not lock.acquire(blocking=False):
-        return JSONResponse(
-            {"error": "Agent is currently running. Stop it and wait for it to finish before starting a new session."},
-            status_code=409,
-        )
-    try:
-        sessions.reset(DESKTOP_USER_ID, workspace_id=workspace_id)
-    finally:
-        lock.release()
-    new_status = sessions.get_status(DESKTOP_USER_ID)
+    new_session = sessions.create_session(DESKTOP_USER_ID, workspace_id=workspace_id)
     return {
-        "session_id": new_status["session_id"] if new_status else None,
-        "workspace_id": new_status["workspace_id"] if new_status else None,
+        "session_id": new_session["session_id"],
+        "workspace_id": new_session.get("workspace_id"),
         "message": "New session created",
     }
 
@@ -556,31 +583,25 @@ async def get_current_session():
 
 @app.put("/api/sessions/{session_id}/switch")
 async def switch_session(session_id: str):
-    """Switch to a different saved session.
+    """Switch to a different saved session (no lock required).
 
-    Returns the switched session's messages inline so the frontend
-    doesn't need a separate GET /sessions/current call.
+    In multi-session mode, this just loads the session data and
+    updates the active pointer. Other sessions keep running.
+
+    Returns the session's messages inline so the frontend doesn't
+    need a separate GET call.
     """
-    lock = sessions.get_lock(DESKTOP_USER_ID)
-    if not lock.acquire(blocking=False):
-        return JSONResponse(
-            {"error": "Agent is currently running. Wait for it to finish before switching."},
-            status_code=409,
-        )
-    try:
-        ok = sessions.switch_session(DESKTOP_USER_ID, session_id)
-    finally:
-        lock.release()
-
+    ok = sessions.switch_session(DESKTOP_USER_ID, session_id)
     if not ok:
         return JSONResponse(
             {"error": f"Session '{session_id}' not found"},
             status_code=404,
         )
 
-    # Return session data inline (same shape as GET /sessions/current)
-    session = sessions.get_or_create(DESKTOP_USER_ID)
-    info = sessions.get_status(DESKTOP_USER_ID)
+    session = sessions.get_session(session_id)
+    if not session:
+        session = sessions.get_or_create(DESKTOP_USER_ID)
+
     raw_history = _serialize_history(session["history"])
     display_messages = [msg for msg in raw_history if msg.get("role") != "system"]
 
@@ -593,18 +614,26 @@ async def switch_session(session_id: str):
         "created_at": session["created_at"],
         "last_active": session["last_active"],
         "token_stats": dict(session["token_stats"]),
-        "is_running": info["is_running"] if info else False,
+        "is_running": sessions.is_session_running(session_id),
     }
+
+
+@app.post("/api/sessions/{session_id}/stop")
+async def stop_session(session_id: str):
+    """Stop a running agent on a specific session."""
+    if not sessions.is_session_running(session_id):
+        return JSONResponse({"error": "Session is not running"}, status_code=409)
+    sessions.request_stop(DESKTOP_USER_ID, session_id=session_id)
+    channel._push_event(session_id, "stopping", {"scope": "all"})
+    return {"status": "ok", "message": f"Stop requested for session {session_id}"}
 
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str):
-    """Delete a saved session."""
-    # Check if trying to delete the current session
-    status = sessions.get_status(DESKTOP_USER_ID)
-    if status and status["session_id"] == session_id:
+    """Delete a saved session. Cannot delete a running session."""
+    if sessions.is_session_running(session_id):
         return JSONResponse(
-            {"error": "Cannot delete the currently active session. Switch to another session first."},
+            {"error": "Cannot delete a running session. Stop it first."},
             status_code=409,
         )
 
@@ -690,7 +719,14 @@ async def command(cmd: str, request: Request):
     # gets instant feedback without waiting for the agent to finish
     if cmd == "stop":
         scope = args.strip().lower() if args else "all"
-        channel._push_event(DESKTOP_USER_ID, "stopping", {"scope": scope})
+        # Support session_id in stop command body
+        stop_session_id = body.get("session_id") if isinstance(body, dict) else None
+        if stop_session_id:
+            # Stop a specific session
+            sessions.request_stop(DESKTOP_USER_ID, session_id=stop_session_id)
+            channel._push_event(stop_session_id, "stopping", {"scope": scope})
+        else:
+            channel._push_event(DESKTOP_USER_ID, "stopping", {"scope": scope})
 
     return {"result": "\n".join(responses)}
 

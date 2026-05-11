@@ -2,7 +2,7 @@
 Context engineering — execution context, compression, trimming, and memory management.
 
 This package provides:
-  - Execution context (user_id, channel_name) for tools during Agent execution
+  - Execution context (user_id, channel_name, session_id) for tools during Agent execution
   - Context compression (sliding-window summarization)
   - Tool output trimming
 
@@ -13,18 +13,20 @@ channel to reply to — these come from the environment, not from the Agent.
 Two IDs are tracked:
   - user_id: session user ID (OWNER_USER_ID in single-owner mode)
   - channel_user_id: channel-native recipient ID (Feishu open_id, Telegram chat_id)
+  - session_id: specific session ID (for multi-session support)
 
 Usage:
     # In agent_runner (set context before running agent_loop):
     from context import set_context, clear_context
-    set_context(user_id="owner", channel_name="feishu", channel_user_id="ou_xxx")
+    set_context(user_id="owner", channel_name="feishu", channel_user_id="ou_xxx",
+                session_id="20260511_120000_ab12")
     ...
     clear_context()
 
     # In tools (read context):
     from context import get_context
     ctx = get_context()
-    ctx["user_id"], ctx["channel_user_id"], ctx["channel_name"]
+    ctx["user_id"], ctx["channel_user_id"], ctx["channel_name"], ctx["session_id"]
 """
 
 import threading
@@ -39,6 +41,7 @@ def set_context(
     status_func=None,
     subagent_check_stop=None,
     channel_user_id: str | None = None,
+    session_id: str | None = None,
 ):
     """Set the execution context for the current thread."""
     _local.user_id = user_id
@@ -47,6 +50,7 @@ def set_context(
     _local.check_stop = check_stop
     _local.status_func = status_func
     _local.subagent_check_stop = subagent_check_stop
+    _local.session_id = session_id
 
 
 def get_context() -> dict:
@@ -62,6 +66,7 @@ def get_context() -> dict:
             "check_stop": getattr(_local, "check_stop", None),
             "status_func": getattr(_local, "status_func", None),
             "subagent_check_stop": getattr(_local, "subagent_check_stop", None),
+            "session_id": getattr(_local, "session_id", None),
         }
     return {}
 
@@ -74,3 +79,4 @@ def clear_context():
     _local.check_stop = None
     _local.status_func = None
     _local.subagent_check_stop = None
+    _local.session_id = None
