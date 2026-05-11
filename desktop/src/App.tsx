@@ -923,6 +923,10 @@ function App() {
     pendingCredential: typeof pendingCredential;
     idCounter: number;
   }
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sessionList, setSessionList] = useState<SessionItem[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+
   const sessionCacheRef = useRef<Record<string, SessionUIState>>({});
   const currentSessionIdRef = useRef<string | null>(null);
 
@@ -954,10 +958,6 @@ function App() {
     idCounter.current = cached.idCounter;
     return true;
   }, []);
-
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sessionList, setSessionList] = useState<SessionItem[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   // Workspaces (Phase D — workspace-as-project)
   const [workspaceList, setWorkspaceList] = useState<WorkspaceItem[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
