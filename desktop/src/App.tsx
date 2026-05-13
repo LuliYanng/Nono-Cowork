@@ -1042,6 +1042,24 @@ function App() {
     }
   }, []);
 
+  const clearPendingAskUserForSession = useCallback((sid: string | null) => {
+    if (sid && sessionCacheRef.current[sid]) {
+      sessionCacheRef.current[sid].pendingAskUser = null;
+    }
+    if (currentSessionIdRef.current === sid) {
+      setPendingAskUser(null);
+    }
+  }, []);
+
+  const clearPendingCredentialForSession = useCallback((sid: string | null) => {
+    if (sid && sessionCacheRef.current[sid]) {
+      sessionCacheRef.current[sid].pendingCredential = null;
+    }
+    if (currentSessionIdRef.current === sid) {
+      setPendingCredential(null);
+    }
+  }, []);
+
   const saveCurrentToCache = useCallback((sid: string) => {
     sessionCacheRef.current[sid] = {
       messages: [...messagesRef.current], isStreaming, isStopping, statusText,
@@ -2527,20 +2545,22 @@ function App() {
                     <AskUserCard
                       questions={pendingAskUser.questions}
                       onSubmit={(answers) => {
-                        setPendingAskUser(null);
+                        const sid = currentSessionId;
+                        clearPendingAskUserForSession(sid);
                         const answer = answers.length === 1 ? answers[0] : answers.map((a, i) => `Q${i + 1}: ${a}`).join("\n");
                         fetch(`${API_BASE}/api/ask-reply`, {
                           method: "POST",
                           headers: authHeaders({ "Content-Type": "application/json" }),
-                          body: JSON.stringify({ answer, session_id: currentSessionId }),
+                          body: JSON.stringify({ answer, session_id: sid }),
                         }).catch(() => {});
                       }}
                       onSkip={() => {
-                        setPendingAskUser(null);
+                        const sid = currentSessionId;
+                        clearPendingAskUserForSession(sid);
                         fetch(`${API_BASE}/api/ask-reply`, {
                           method: "POST",
                           headers: authHeaders({ "Content-Type": "application/json" }),
-                          body: JSON.stringify({ answer: "(skipped)", session_id: currentSessionId }),
+                          body: JSON.stringify({ answer: "(skipped)", session_id: sid }),
                         }).catch(() => {});
                       }}
                     />
@@ -2550,19 +2570,21 @@ function App() {
                       serviceName={pendingCredential.serviceName}
                       serviceDescription={pendingCredential.serviceDescription}
                       onSubmit={(value) => {
-                        setPendingCredential(null);
+                        const sid = currentSessionId;
+                        clearPendingCredentialForSession(sid);
                         fetch(`${API_BASE}/api/credential-submit`, {
                           method: "POST",
                           headers: authHeaders({ "Content-Type": "application/json" }),
-                          body: JSON.stringify({ value, session_id: currentSessionId }),
+                          body: JSON.stringify({ value, session_id: sid }),
                         }).catch(() => {});
                       }}
                       onSkip={() => {
-                        setPendingCredential(null);
+                        const sid = currentSessionId;
+                        clearPendingCredentialForSession(sid);
                         fetch(`${API_BASE}/api/credential-submit`, {
                           method: "POST",
                           headers: authHeaders({ "Content-Type": "application/json" }),
-                          body: JSON.stringify({ value: "(skipped)", session_id: currentSessionId }),
+                          body: JSON.stringify({ value: "(skipped)", session_id: sid }),
                         }).catch(() => {});
                       }}
                     />
