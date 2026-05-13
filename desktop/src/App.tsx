@@ -690,10 +690,10 @@ const PartsRenderer = memo(function PartsRenderer({
       let toolState: "input-available" | "output-available" | "input-streaming";
       if (hasResult) {
         toolState = "output-available";
-      } else if (isActive || (isStreaming && part.toolName === "delegate")) {
+      } else if (isStreaming) {
         toolState = "input-available";
       } else {
-        toolState = "input-streaming";
+        toolState = "output-available";
       }
 
       const shouldOpen = false; // Always closed by default, users can click to inspect args/output
@@ -2380,6 +2380,11 @@ function App() {
                       let turnStart = 0;
 
                       visibleMessages.forEach((msg, idx) => {
+                        const isMessageStreaming =
+                          isStreaming &&
+                          msg.role === "assistant" &&
+                          (msg.id === thinkingMsgId || msg.id === animatingMsgId);
+
                         // Render the message
                         output.push(
                           <Message key={msg.id} from={msg.role}>
@@ -2432,7 +2437,7 @@ function App() {
                                     <PartsRenderer
                                       parts={msg.parts}
                                       isActive={msg.id === thinkingMsgId}
-                                      isStreaming={isStreaming}
+                                      isStreaming={isMessageStreaming}
                                       sessionId={currentSessionId}
                                       defaultCollapsed={msg.id.startsWith("hist-")}
                                     />
